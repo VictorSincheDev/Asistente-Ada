@@ -1,0 +1,12 @@
+{
+  "hooks": {
+    "UserPromptSubmit": [{ "hooks": [{ "type": "command", "command": "node \"C:/RUTA/A/hadita/hooks/notify.js\"" }] }],
+    "PreToolUse":       [{ "hooks": [{ "type": "command", "command": "node \"C:/RUTA/A/hadita/hooks/notify.js\"" }] }],
+    "Notification":     [{ "hooks": [{ "type": "command", "command": "node \"C:/RUTA/A/hadita/hooks/notify.js\"" }] }],
+    "SubagentStop":     [{ "hooks": [{ "type": "command", "command": "node \"C:/RUTA/A/hadita/hooks/notify.js\"" }] }],
+    "Stop":             [{ "hooks": [{ "type": "command", "command": "node \"C:/RUTA/A/hadita/hooks/notify.js\"" }] }],
+    "PostToolUseFailure": [{ "hooks": [{ "type": "command", "command": "node \"C:/RUTA/A/hadita/hooks/notify.js\"" }] }],
+    "StopFailure":      [{ "hooks": [{ "type": "command", "command": "node \"C:/RUTA/A/hadita/hooks/notify.js\"" }] }],
+    "SessionEnd":       [{ "hooks": [{ "type": "command", "command": "node \"C:/RUTA/A/hadita/hooks/notify.js\"" }] }]
+  }
+}

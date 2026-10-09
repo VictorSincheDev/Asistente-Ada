@@ -1,0 +1,8 @@
+{
+  "name": "hadita",
+  "version": "0.1.0",
+  "description": "Hadita de escritorio que reacciona a los eventos de Claude Code",
+  "main": "main.js",
+  "scripts": { "start": "electron ." },
+  "devDependencies": { "electron": "^33.0.0" }
+}
