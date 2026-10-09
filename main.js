@@ -8,7 +8,7 @@ const { start } = require('./server');
 app.commandLine.appendSwitch('autoplay-policy', 'no-user-gesture-required');
 
 let win;
-const W = 240, H = 210;
+const W = 300, H = 440;
 
 function createWindow() {
   const { workArea } = screen.getPrimaryDisplay();
@@ -23,7 +23,8 @@ function createWindow() {
     alwaysOnTop: true,
     skipTaskbar: true,
     hasShadow: false,
-    webPreferences: { preload: path.join(__dirname, 'preload.js') },
+    // sandbox: false para que preload.js pueda leer el .vrm con fs
+    webPreferences: { preload: path.join(__dirname, 'preload.js'), sandbox: false },
   });
   win.setAlwaysOnTop(true, 'screen-saver');
   win.loadFile('index.html');
@@ -34,6 +35,17 @@ app.whenReady().then(() => {
   const server = start((evt) => {
     if (win && !win.isDestroyed()) win.webContents.send('hadita-event', evt);
   });
+  // posición del cursor (relativa a la ventana) para que la hadita lo siga con la mirada
+  let lastCursor = '';
+  setInterval(() => {
+    if (!win || win.isDestroyed()) return;
+    const p = screen.getCursorScreenPoint();
+    const [x, y] = win.getPosition();
+    const key = `${p.x - x},${p.y - y}`;
+    if (key === lastCursor) return;
+    lastCursor = key;
+    win.webContents.send('hadita-cursor', p.x - x, p.y - y);
+  }, 66);
   server.on('error', (e) => {
     console.error('No pude abrir el puerto (¿ya hay otra hadita corriendo?):', e.message);
     app.quit();

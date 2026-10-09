@@ -3,6 +3,16 @@
   "version": "0.1.0",
   "description": "Hadita de escritorio que reacciona a los eventos de Claude Code",
   "main": "main.js",
-  "scripts": { "start": "electron ." },
-  "devDependencies": { "electron": "^33.0.0" }
+  "scripts": {
+    "build": "esbuild src/renderer.js --bundle --format=iife --outfile=dist/renderer.js",
+    "start": "npm run build && electron ."
+  },
+  "devDependencies": {
+    "electron": "^33.0.0",
+    "esbuild": "^0.28.2"
+  },
+  "dependencies": {
+    "@pixiv/three-vrm": "^3.5.5",
+    "three": "^0.186.1"
+  }
 }

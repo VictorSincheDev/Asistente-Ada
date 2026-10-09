@@ -1,87 +1,21 @@
-// ---------- Sprite (16x16, diseño propio; cámbialo editando SPRITE y PALETTE) ----------
-const SPRITE = [
-  '......HHHH......',
-  '.....HHHHHH.....',
-  '....HHHHHHHH....',
-  '....HSSSSSSH....',
-  '....HSESSESH....',
-  '....HSSSSSSH....',
-  '.WW..HSSSSH..WW.',
-  'WwwW..DDDD..WwwW',
-  'WwwwWDDDDDDWwwwW',
-  'WwwwWSDDDDSWwwwW',
-  '.WwwW.DDDD.WwwW.',
-  '..WW.DDDDDD.WW..',
-  '.....DDDDDD.....',
-  '......S..S......',
-  '......S..S......',
-  '......B..B......',
-];
-const PALETTE = { H: '#2fb8a6', S: '#ffd9b8', E: '#2a2540', D: '#f4f1ff', W: '#8f7cf0', w: '#d6cdff', B: '#6a5acd',
-  M: '#c2566b', R: '#ffb0a8', C: '#b98a6e' }; // boca, mejilla y ojo cerrado
+import { initAvatar, mood, hop, lookAtCursor } from './avatar.js';
 
-// Caras: píxeles [x, y, color] que se pintan encima del sprite
-const FACES = {
-  happy:  [[5, 5, 'R'], [7, 5, 'M'], [8, 5, 'M'], [10, 5, 'R']],
-  asleep: [[6, 4, 'C'], [9, 4, 'C']],
-};
-const ZZZ = ['ZZZ', '.Z.', 'ZZZ']; // la «z» que sube mientras duerme
-const SLEEP_MS = 5 * 60 * 1000;    // inactiva este rato → se duerme
+const SLEEP_MS = 5 * 60 * 1000; // inactiva este rato → se duerme
 
 // Color del aura por estado (el texto del globo dice lo mismo, no depende solo del color)
 const STATES = {
-  idle:    { aura: null,      speed: 900 },
-  working: { aura: '#5aa9ff', speed: 220 },
-  waiting: { aura: '#ffb347', speed: 450 },
-  done:    { aura: '#5fd38d', speed: 600 },
-  error:   { aura: '#ff5c5c', speed: 300 },
+  idle:    { aura: null },
+  working: { aura: '#5aa9ff' },
+  waiting: { aura: '#ffb347' },
+  done:    { aura: '#5fd38d' },
+  error:   { aura: '#ff5c5c' },
 };
 const PRIORITY = ['error', 'waiting', 'working', 'done', 'idle'];
 
-const canvas = document.getElementById('sprite');
-const ctx = canvas.getContext('2d');
+const canvas = document.getElementById('avatar');
 const bubble = document.getElementById('bubble');
 let current = 'idle';
-let asleep = false;
 let sleepTimer = null;
-
-function draw(t) {
-  const st = STATES[current];
-  const flap = !asleep && Math.floor(t / st.speed) % 2 === 1; // dormida no aletea
-  const bob = Math.floor(t / (asleep ? 1200 : 500)) % 2; // sube y baja 1 px
-  ctx.clearRect(0, 0, 16, 18);
-  SPRITE.forEach((row, y) => {
-    [...row].forEach((ch, x) => {
-      if (ch === '.') return;
-      const wing = ch === 'W' || ch === 'w';
-      if (wing && flap) {
-        if (x === 0 || x === 15) return;        // alas recogidas
-        if (x === 1 || x === 14) ch = 'W';
-      }
-      ctx.fillStyle = PALETTE[ch];
-      ctx.fillRect(x, y + 1 + bob, 1, 1);
-    });
-  });
-  const face = asleep ? FACES.asleep : current === 'done' ? FACES.happy : null;
-  if (face) {
-    for (const [x, y, ch] of face) {
-      ctx.fillStyle = PALETTE[ch];
-      ctx.fillRect(x, y + 1 + bob, 1, 1);
-    }
-  }
-  if (asleep) {
-    const step = Math.floor(t / 700) % 3; // sube 1 px por paso y se desvanece
-    ctx.fillStyle = PALETTE.w;
-    ctx.globalAlpha = 1 - step * 0.3;
-    ZZZ.forEach((row, y) => {
-      [...row].forEach((ch, x) => { if (ch === 'Z') ctx.fillRect(13 + x, 3 - step + y, 1, 1); });
-    });
-    ctx.globalAlpha = 1;
-  }
-  canvas.style.filter = st.aura ? `drop-shadow(0 0 6px ${st.aura})` : 'none';
-  requestAnimationFrame(draw);
-}
-requestAnimationFrame(draw);
 
 // ---------- Estado por sesión (varias sesiones de Claude Code a la vez) ----------
 const sessions = new Map(); // id -> { state, text, cwd, timer }
@@ -97,6 +31,9 @@ function render() {
   const text = best && best.state !== 'idle' ? best.text : '';
   bubble.textContent = text;
   bubble.classList.toggle('show', Boolean(text));
+  mood.state = current;
+  const aura = STATES[current].aura;
+  canvas.style.filter = aura ? `drop-shadow(0 0 6px ${aura})` : 'none';
   updateSleep();
 }
 
@@ -105,9 +42,9 @@ function updateSleep() {
   if (current !== 'idle') {
     clearTimeout(sleepTimer);
     sleepTimer = null;
-    asleep = false;
-  } else if (!sleepTimer && !asleep) {
-    sleepTimer = setTimeout(() => { sleepTimer = null; asleep = true; }, SLEEP_MS);
+    mood.asleep = false;
+  } else if (!sleepTimer && !mood.asleep) {
+    sleepTimer = setTimeout(() => { sleepTimer = null; mood.asleep = true; }, SLEEP_MS);
   }
 }
 updateSleep();
@@ -152,13 +89,14 @@ function speak(text) {
   u.lang = es ? es.lang : 'es-MX';
   u.rate = 1.05;
   u.pitch = 1.3;
+  // mueve la boca mientras dura la frase
+  u.onstart = () => { mood.talking = true; };
+  u.onend = u.onerror = () => { mood.talking = false; };
   speechSynthesis.speak(u);
 }
 
 function announce(state, proj) {
-  canvas.classList.remove('hop');
-  void canvas.offsetWidth; // reinicia la animación
-  canvas.classList.add('hop');
+  hop();
   if (muted) return;
   if (state === 'done') {
     chime([659, 880, 1319]);
@@ -258,6 +196,18 @@ canvas.addEventListener('pointerup', () => {
 canvas.addEventListener('pointercancel', () => { drag = null; });
 
 if (window.hadita) {
+  window.hadita.loadModel()
+    .then((buffer) => initAvatar(canvas, buffer))
+    .catch((e) => {
+      console.error('No pude cargar el avatar:', e);
+      bubble.textContent = 'No pude cargar assets/hadita.vrm';
+      bubble.classList.add('show');
+    });
+  // el cursor llega en píxeles relativos a la ventana
+  window.hadita.onCursor((x, y) => {
+    const r = canvas.getBoundingClientRect();
+    lookAtCursor(x - (r.left + r.width / 2), y - (r.top + r.height / 2));
+  });
   window.hadita.onEvent(handle);
   document.getElementById('close').addEventListener('click', () => window.hadita.quit());
 }
