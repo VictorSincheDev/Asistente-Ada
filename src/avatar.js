@@ -1,7 +1,8 @@
-// Avatar 3D (VRM 1.0): carga, encuadre, vida básica, poses por estado y alas.
+// Avatar 3D (VRM 1.0): carga, encuadre, vida básica, clips de animación, poses por código y alas.
 import * as THREE from 'three';
 import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
 import { VRMLoaderPlugin, VRMUtils } from '@pixiv/three-vrm';
+import { clipDesdeFBX, clipDesdeVRMA } from './animacion.js';
 
 const FPS = 30;
 const ARM_DOWN = 1.32;     // brazos en descanso, pegados al cuerpo
@@ -35,9 +36,87 @@ let swayPhase = 0, flapPhase = 0, mouth = 0;
 let nextBlink = 3, blinkStart = -1;
 let hopLeft = 0;
 let lean = 0;
+const REST = [0, 0, 0];
+const _e = new THREE.Euler(), _q = new THREE.Quaternion();
 
 const clamp = (v, a, b) => Math.min(b, Math.max(a, v));
 const bone = (name) => vrm.humanoid.getNormalizedBoneNode(name);
+let bones = [];            // huesos humanoides que mueve la pose por código (todos menos los ojos)
+let hipsRest = null;       // posición de reposo de las caderas
+let alturaCaderas = 1;     // para escalar el desplazamiento de los FBX de Mixamo
+
+// ---------- Clips de animación ----------
+// estado → clave del mapa de clips (config.animaciones). Sin clip para el estado, se mueve por código.
+const CLIP_DE_ESTADO = { idle: 'idle', working: 'working', waiting: 'waiting', done: 'done', thinking: 'pensar' };
+const FUNDIDO = 0.3;          // crossfade entre clips, en segundos
+const ESTIRON_MIN_S = 240;    // en idle se estira de vez en cuando (entre 4 y 8 min)
+let mixer = null;
+const actions = new Map();    // clave → AnimationAction
+let playing = null;           // clave del clip que manda (null = movimiento por código)
+let oneShot = null;           // { key, until }: clip de una sola vez (estirarse)
+let nextStretch = Infinity;
+let wasAsleep = false;
+const lookOffset = new THREE.Quaternion();
+
+// Carga los clips ([{ key, ext, buffer }]) y reemplaza los anteriores. Devuelve las claves cargadas.
+export async function loadClips(list) {
+  if (!vrm) return [];
+  const clips = new Map();
+  for (const { key, ext, buffer } of list) {
+    try {
+      clips.set(key, ext === 'vrma' ? await clipDesdeVRMA(buffer, vrm) : clipDesdeFBX(buffer, vrm, alturaCaderas));
+    } catch (e) {
+      console.error(`No pude cargar la animación «${key}»:`, e);
+    }
+  }
+  mixer.stopAllAction();
+  for (const a of actions.values()) mixer.uncacheClip(a.getClip());
+  actions.clear();
+  playing = null;
+  oneShot = null;
+  for (const [key, clip] of clips) {
+    const action = mixer.clipAction(clip);
+    if (key === 'estirarse') action.setLoop(THREE.LoopOnce, 1);
+    actions.set(key, action);
+  }
+  nextStretch = performance.now() / 1000 + ESTIRON_MIN_S * (1 + Math.random());
+  return [...clips.keys()];
+}
+
+function startStretch(t) {
+  const action = actions.get('estirarse');
+  if (!action) return;
+  const duration = action.getClip().duration;
+  oneShot = { key: 'estirarse', until: t + duration - FUNDIDO };
+  nextStretch = t + duration + ESTIRON_MIN_S * (1 + Math.random());
+}
+
+// Qué clip toca ahora (null = movimiento por código)
+function wantedClip(t) {
+  if (mood.asleep) return null;
+  if (oneShot && t < oneShot.until) return oneShot.key;
+  oneShot = null;
+  if (mood.greeting) return actions.has('waiting') ? 'waiting' : null; // sin clip, saluda por código
+  if (mood.state === 'idle' && t > nextStretch) startStretch(t);
+  if (oneShot) return oneShot.key;
+  const key = CLIP_DE_ESTADO[mood.state];
+  return actions.has(key) ? key : null;
+}
+
+// Cambia de clip con crossfade; hacia el código, el clip se desvanece y la pose por código sigue desde ahí
+function switchClip(key) {
+  if (key === playing) return;
+  const from = playing && actions.get(playing);
+  const to = key && actions.get(key);
+  if (to) {
+    to.reset().setEffectiveTimeScale(1).setEffectiveWeight(1).play();
+    if (from) from.crossFadeTo(to, FUNDIDO, false);
+    else to.fadeIn(FUNDIDO);
+  } else if (from) {
+    from.fadeOut(FUNDIDO);
+  }
+  playing = key;
+}
 
 export function hop() { hopLeft = 1; }
 
@@ -68,6 +147,13 @@ function makeWing(side) {
   return pivot;
 }
 
+// Tras cambiar el tamaño (zoom de la ventana) cambia la densidad de píxeles: se ajusta la resolución
+export function resize() {
+  if (!renderer) return;
+  renderer.setPixelRatio(window.devicePixelRatio);
+  renderer.setSize(renderer.domElement.clientWidth, renderer.domElement.clientHeight, false);
+}
+
 export async function initAvatar(canvas, buffer) {
   renderer = new THREE.WebGLRenderer({ canvas, alpha: true, antialias: true });
   renderer.setClearColor(0x000000, 0); // fondo totalmente transparente
@@ -89,12 +175,17 @@ export async function initAvatar(canvas, buffer) {
   vrm.scene.traverse((o) => { o.frustumCulled = false; });
   scene.add(vrm.scene);
   vrm.lookAt.target = lookTarget;
+  bones = Object.keys(vrm.humanoid.humanBones).filter((n) => n !== 'leftEye' && n !== 'rightEye');
+  hipsRest = bone('hips').position.clone();
+  vrm.scene.updateMatrixWorld(true);
+  alturaCaderas = Math.abs(bone('hips').getWorldPosition(new THREE.Vector3()).y - vrm.scene.position.y);
+  mixer = new THREE.AnimationMixer(vrm.scene);
 
-  // Encuadre cercano: desde la cabeza (con aire para el saltito) hasta media pierna
+  // Encuadre de cuerpo entero, con aire arriba para el saltito y un poco bajo los pies
   const box = new THREE.Box3().setFromObject(vrm.scene);
   const body = box.max.y - box.min.y;
-  const height = body * 1.0;
-  centerY = box.max.y + body * 0.1 - height / 2;
+  const height = body * 1.12;
+  centerY = box.min.y - body * 0.02 + height / 2;
   const fov = 20;
   camera = new THREE.PerspectiveCamera(fov, canvas.clientWidth / canvas.clientHeight, 0.1, 30);
   camera.position.set(0, centerY, (height / 2) / Math.tan(THREE.MathUtils.degToRad(fov / 2)));
@@ -125,7 +216,6 @@ function update(dt, t) {
   const pose = POSES[mood.state] || POSES.idle;
   const asleep = mood.asleep;
   const k = 1 - Math.exp(-8 * dt); // suavizado entre poses
-  const ease = (obj, axis, target) => { obj.rotation[axis] += (target - obj.rotation[axis]) * k; };
   swayPhase += dt * (asleep ? 0.5 : pose.sway);
   flapPhase += dt * (asleep ? 1.5 : pose.flap);
 
@@ -156,30 +246,47 @@ function update(dt, t) {
   else mouth = mood.talking ? 0.5 + 0.5 * Math.sin(t * 16) : mouth * (1 - k);
   em.setValue('aa', mouth);
 
-  // Respiración y balanceo
-  const sway = Math.sin(swayPhase);
-  const breath = Math.sin(t * 1.7);
-  bone('hips').rotation.z = sway * 0.03;
-  bone('hips').rotation.y = Math.sin(swayPhase * 0.5) * 0.05;
-  lean += ((asleep ? 0 : pose.lean || 0) - lean) * k;
-  bone('spine').rotation.x = breath * 0.025 + lean;
-  bone('spine').rotation.z = -sway * 0.02;
-  const chest = bone('chest');
-  if (chest) chest.rotation.x = Math.sin(t * 1.7 + 0.5) * 0.02;
-
-  // Cabeza: inclinada al trabajar, caída al dormir; gira un poco hacia el cursor
+  // Mirada: los ojos siguen al cursor (vrm.lookAt) y el cuello gira un poco, con clip o sin él
   lookTarget.position.lerp(look, k);
-  const head = bone('head'), neck = bone('neck') || head;
-  ease(head, 'z', pose.tilt);
-  ease(head, 'x', asleep ? 0.3 : pose.tilt * 0.6 - lean * 0.6); // al inclinarse sigue mirando al frente
-  ease(neck, 'y', asleep ? 0 : clamp(lookTarget.position.x, -1, 1) * 0.3);
+  const lookYaw = asleep ? 0 : clamp(lookTarget.position.x, -1, 1) * 0.3;
+  const neck = bone('neck') || bone('head');
 
-  // Brazos: abajo; en waiting saluda con el derecho
-  const waving = (mood.state === 'waiting' || mood.greeting) && !asleep;
-  ease(bone('leftUpperArm'), 'z', -ARM_DOWN + breath * 0.015);
-  ease(bone('rightUpperArm'), 'z', waving ? -0.35 : ARM_DOWN - breath * 0.015);
-  ease(bone('rightUpperArm'), 'x', waving ? 0 : ARM_FORWARD);
-  ease(bone('rightLowerArm'), 'z', waving ? -1.2 + Math.sin(t * 9) * 0.35 : 0);
+  // Clip de animación del estado, si existe; al despertar se estira
+  if (wasAsleep && !asleep) startStretch(t);
+  wasAsleep = asleep;
+  switchClip(wantedClip(t));
+
+  if (!playing) {
+    // Movimiento por código: cada hueso se acerca a su objetivo; los que no tienen, al reposo
+    const sway = Math.sin(swayPhase);
+    const breath = Math.sin(t * 1.7);
+    lean += ((asleep ? 0 : pose.lean || 0) - lean) * k;
+    const waving = (mood.state === 'waiting' || mood.greeting) && !asleep;
+    const target = {
+      hips: [0, Math.sin(swayPhase * 0.5) * 0.05, sway * 0.03],
+      spine: [breath * 0.025 + lean, 0, -sway * 0.02],
+      chest: [Math.sin(t * 1.7 + 0.5) * 0.02, 0, 0],
+      // cabeza: inclinada al trabajar, caída al dormir; al inclinarse el cuerpo sigue mirando al frente
+      head: [asleep ? 0.3 : pose.tilt * 0.6 - lean * 0.6, 0, pose.tilt],
+      leftUpperArm: [ARM_FORWARD, 0, -ARM_DOWN + breath * 0.015],
+      // en waiting (o al saludar) levanta el brazo derecho y mueve el antebrazo
+      rightUpperArm: waving ? [0, 0, -0.35] : [ARM_FORWARD, 0, ARM_DOWN - breath * 0.015],
+      rightLowerArm: waving ? [0, 0, -1.2 + Math.sin(t * 9) * 0.35] : [0, 0, 0],
+    };
+    if (bone('neck')) target.neck = [0, lookYaw, 0];
+    else target.head[1] = lookYaw;
+    for (const name of bones) {
+      const r = target[name] || REST;
+      _q.setFromEuler(_e.set(r[0], r[1], r[2]));
+      bone(name).quaternion.slerp(_q, k);
+    }
+    bone('hips').position.lerp(hipsRest, k);
+    mixer.update(dt); // termina el desvanecido del último clip, si lo hay
+  } else {
+    neck.quaternion.identity(); // el clip lo pisa si lo anima; si no, queda en reposo
+    mixer.update(dt);
+    neck.quaternion.multiply(lookOffset.setFromEuler(_e.set(0, lookYaw, 0)));
+  }
 
   // Flota, y da dos saltitos cuando hay aviso
   let y = Math.sin(t * 1.3) * 0.012;

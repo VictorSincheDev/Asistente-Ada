@@ -1,4 +1,4 @@
-const { app, BrowserWindow, screen, ipcMain, globalShortcut, session } = require('electron');
+const { app, BrowserWindow, screen, ipcMain, globalShortcut, session, Tray, Menu, shell } = require('electron');
 const path = require('path');
 const fs = require('fs');
 const { spawn } = require('child_process');
@@ -8,20 +8,35 @@ const charla = require('./charla');
 const oido = require('./oido');
 const sesiones = require('./sesiones');
 const tareas = require('./tareas');
+const config = require('./config');
+const { crearIcono } = require('./icono');
 
 // permite sonido y voz sin que hagas clic antes
 app.commandLine.appendSwitch('autoplay-policy', 'no-user-gesture-required');
 
-let win;
-const W = 300, H = 500;
+let win, tray;
+const W = 300, H = 500; // tamaño mediano; chico y grande lo escalan (config.TAMANOS)
+
+const escala = () => config.TAMANOS[config.leer().tamano];
+const tamano = () => ({ width: Math.round(W * escala()), height: Math.round(H * escala()) });
+
+// Posición guardada si sigue cayendo en alguna pantalla; si no, abajo a la derecha
+function posicionInicial({ width, height }) {
+  const p = config.leer().posicion;
+  if (p) {
+    const visible = screen.getAllDisplays().some(({ workArea: a }) =>
+      p.x + width > a.x + 40 && p.x < a.x + a.width - 40 && p.y >= a.y - 10 && p.y < a.y + a.height - 80);
+    if (visible) return p;
+  }
+  const { workArea } = screen.getPrimaryDisplay();
+  return { x: workArea.x + workArea.width - width - 16, y: workArea.y + workArea.height - height - 16 };
+}
 
 function createWindow() {
-  const { workArea } = screen.getPrimaryDisplay();
+  const size = tamano();
   win = new BrowserWindow({
-    width: W,
-    height: H,
-    x: workArea.x + workArea.width - W - 16,
-    y: workArea.y + workArea.height - H - 16,
+    ...size,
+    ...posicionInicial(size),
     transparent: true,
     frame: false,
     resizable: false,
@@ -34,7 +49,92 @@ function createWindow() {
   });
   win.setAlwaysOnTop(true, 'screen-saver');
   win.setContentProtection(true); // no sale al compartir pantalla ni en capturas
+  // el tamaño se hace con zoom: todo el contenido (CSS y canvas) escala junto
+  win.webContents.on('did-finish-load', () => win.webContents.setZoomFactor(escala()));
+  win.on('show', actualizarMenu);
+  win.on('hide', actualizarMenu);
   win.loadFile('index.html');
+}
+
+function alternarVentana() {
+  if (!win || win.isDestroyed()) return;
+  if (win.isVisible()) win.hide(); else win.showInactive();
+}
+
+// ---------- Configuración: se aplica en vivo ----------
+function aplicarConfig(c, anterior) {
+  if (voz.configurar(c)) pregenerar(); // otra voz, tono o velocidad: frases fijas de nuevo a la caché
+  if (win && !win.isDestroyed()) {
+    if (anterior && c.tamano !== anterior.tamano) {
+      // se agranda o achica manteniendo fija la esquina inferior derecha
+      const b = win.getBounds();
+      const size = tamano();
+      win.setBounds({ x: b.x + b.width - size.width, y: b.y + b.height - size.height, ...size });
+      win.webContents.setZoomFactor(escala());
+      config.cambiar({ posicion: { x: b.x + b.width - size.width, y: b.y + b.height - size.height } });
+    } else if (anterior && JSON.stringify(c.posicion) !== JSON.stringify(anterior.posicion) && c.posicion) {
+      const actual = win.getBounds();
+      if (actual.x !== c.posicion.x || actual.y !== c.posicion.y) win.setBounds({ ...c.posicion, ...tamano() });
+    }
+    win.webContents.send('hadita-config', c);
+  }
+  actualizarMenu();
+}
+
+// Frases fijas y de frases.json, generadas por adelantado en la caché de voz
+function pregenerar() {
+  voz.calentar();
+  let saludos = [];
+  try { saludos = Object.values(JSON.parse(fs.readFileSync(path.join(__dirname, 'frases.json'), 'utf8'))).flat(); } catch {}
+  for (const frase of ['Terminé', 'Te necesito aquí', 'No te escuché bien', ...saludos]) {
+    if (typeof frase === 'string') voz.decir(frase).catch(() => {});
+  }
+}
+
+// ---------- Menú (bandeja y engranaje) ----------
+const PAISES = {
+  'Dominican Republic': 'República Dominicana', 'Equatorial Guinea': 'Guinea Ecuatorial', Mexico: 'México',
+  Panama: 'Panamá', Peru: 'Perú', Spain: 'España', 'United States': 'Estados Unidos',
+};
+let voces = []; // [{ id, nombre, pais }], llegan del servicio de voz
+
+function plantillaMenu() {
+  const c = config.leer();
+  const visible = win && !win.isDestroyed() && win.isVisible();
+  const porPais = new Map();
+  for (const v of voces) {
+    const pais = PAISES[v.pais] || v.pais;
+    if (!porPais.has(pais)) porPais.set(pais, []);
+    porPais.get(pais).push(v);
+  }
+  const menuVoz = voces.length
+    ? [...porPais].map(([pais, lista]) => ({
+      label: pais,
+      submenu: lista.map((v) => ({ label: v.nombre, type: 'radio', checked: v.id === c.voz, click: () => config.cambiar({ voz: v.id }) })),
+    }))
+    : [{ label: c.voz, type: 'radio', checked: true }, { label: 'Lista no disponible (sin internet)', enabled: false }];
+  return [
+    { label: visible ? 'Ocultar' : 'Mostrar', click: alternarVentana },
+    { label: 'Silenciar', type: 'checkbox', checked: c.silencio, click: () => config.cambiar({ silencio: !config.leer().silencio }) },
+    { label: 'Tamaño', submenu: ['chico', 'mediano', 'grande'].map((t) => ({
+      label: t[0].toUpperCase() + t.slice(1), type: 'radio', checked: c.tamano === t, click: () => config.cambiar({ tamano: t }),
+    })) },
+    { label: 'Voz', submenu: menuVoz },
+    { type: 'separator' },
+    { label: 'Abrir configuración', click: () => shell.openPath(config.ruta()) },
+    { label: 'Salir', click: salir },
+  ];
+}
+
+function actualizarMenu() {
+  if (tray && !tray.isDestroyed()) tray.setContextMenu(Menu.buildFromTemplate(plantillaMenu()));
+}
+
+// Sale despidiéndose (el renderer dice la frase y luego pide salir); si no responde, sale igual
+function salir() {
+  if (!win || win.isDestroyed()) return app.quit();
+  win.webContents.send('hadita-salir');
+  setTimeout(() => app.quit(), 7000);
 }
 
 app.whenReady().then(() => {
@@ -43,7 +143,13 @@ app.whenReady().then(() => {
     const soloAudio = (details.mediaTypes || []).every((t) => t === 'audio');
     callback(permission === 'media' && soloAudio);
   });
+  aplicarConfig(config.iniciar(app.getPath('userData'), aplicarConfig));
   createWindow();
+  tray = new Tray(crearIcono());
+  tray.setToolTip('Hadita');
+  tray.on('click', alternarVentana);
+  actualizarMenu();
+  voz.voces().then((lista) => { voces = lista; actualizarMenu(); }).catch(() => {});
   oido.cargar().catch(() => {}); // Whisper se carga una vez, en segundo plano
   const server = start((evt) => {
     voz.calentar(); // hay actividad: que la conexión de voz esté lista para el próximo aviso
@@ -51,17 +157,9 @@ app.whenReady().then(() => {
     if (win && !win.isDestroyed()) win.webContents.send('hadita-event', evt);
   });
   // deja listas las frases fijas y la conexión abierta, para que la voz no espere
-  voz.calentar();
-  let saludos = [];
-  try { saludos = Object.values(JSON.parse(fs.readFileSync(path.join(__dirname, 'frases.json'), 'utf8'))).flat(); } catch {}
-  for (const frase of ['Terminé', 'Te necesito aquí', 'No te escuché bien', ...saludos]) {
-    if (typeof frase === 'string') voz.decir(frase).catch(() => {});
-  }
+  pregenerar();
   // Ctrl+Alt+H oculta y muestra la ventana
-  const ok = globalShortcut.register('Control+Alt+H', () => {
-    if (!win || win.isDestroyed()) return;
-    if (win.isVisible()) win.hide(); else win.showInactive();
-  });
+  const ok = globalShortcut.register('Control+Alt+H', alternarVentana);
   if (!ok) console.error('No pude registrar Ctrl+Alt+H (¿lo usa otra app?)');
   // Ctrl+Alt+Espacio: empieza a escuchar; si ya escucha, corta y envía.
   // (globalShortcut no avisa al soltar la tecla, por eso alterna en vez de mantener presionado)
@@ -71,16 +169,17 @@ app.whenReady().then(() => {
     win.webContents.send('hadita-escuchar');
   });
   if (!okVoz) console.error('No pude registrar Ctrl+Alt+Espacio (¿lo usa otra app?)');
-  // posición del cursor (relativa a la ventana) para que la hadita lo siga con la mirada
+  // posición del cursor (relativa a la ventana, en píxeles CSS) para que la hadita lo siga con la mirada
   let lastCursor = '';
   setInterval(() => {
     if (!win || win.isDestroyed()) return;
     const p = screen.getCursorScreenPoint();
     const [x, y] = win.getPosition();
-    const key = `${p.x - x},${p.y - y}`;
+    const f = escala();
+    const key = `${p.x - x},${p.y - y},${f}`;
     if (key === lastCursor) return;
     lastCursor = key;
-    win.webContents.send('hadita-cursor', p.x - x, p.y - y);
+    win.webContents.send('hadita-cursor', (p.x - x) / f, (p.y - y) / f);
   }, 66);
   server.on('error', (e) => {
     console.error('No pude abrir el puerto (¿ya hay otra hadita corriendo?):', e.message);
@@ -149,12 +248,30 @@ ipcMain.handle('hadita-confirmar', (_e, id, si) => {
   });
   return { texto };
 });
+ipcMain.handle('hadita-config-leer', () => config.leer());
+// el renderer solo puede cambiar el silencio (botón ♪) y el volumen (barrita); el resto va por el menú o el archivo
+ipcMain.on('hadita-silencio', (_e, si) => config.cambiar({ silencio: si === true }));
+ipcMain.on('hadita-volumen', (_e, v) => { if (Number.isFinite(v)) config.cambiar({ volumen: v }); });
+ipcMain.on('hadita-menu', () => {
+  if (win && !win.isDestroyed()) Menu.buildFromTemplate(plantillaMenu()).popup({ window: win });
+});
 ipcMain.on('hadita-focus', (_e, cwd) => focusVSCode(cwd));
-// arrastre manual: el sprite ya no usa -webkit-app-region porque se come los clics
-ipcMain.on('hadita-move', (_e, dx, dy) => {
-  if (!win || win.isDestroyed() || !Number.isFinite(dx) || !Number.isFinite(dy)) return;
-  const [x, y] = win.getPosition();
-  win.setBounds({ x: Math.round(x + dx), y: Math.round(y + dy), width: W, height: H });
+// Arrastre manual (el canvas no usa -webkit-app-region porque se come los clics). La posición se
+// calcula con el cursor real, así no importa el zoom; al soltar se guarda en config.json.
+let arrastre = null;
+ipcMain.on('hadita-drag', (_e, fase) => {
+  if (!win || win.isDestroyed()) return;
+  const p = screen.getCursorScreenPoint();
+  if (fase === 'inicio') {
+    const [x, y] = win.getPosition();
+    arrastre = { dx: p.x - x, dy: p.y - y };
+  } else if (fase === 'mover' && arrastre) {
+    win.setBounds({ x: p.x - arrastre.dx, y: p.y - arrastre.dy, ...tamano() });
+  } else if (fase === 'fin' && arrastre) {
+    arrastre = null;
+    const [x, y] = win.getPosition();
+    config.cambiar({ posicion: { x, y } });
+  }
 });
 ipcMain.on('hadita-quit', () => app.quit());
 app.on('window-all-closed', () => app.quit());

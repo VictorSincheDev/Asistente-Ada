@@ -33,15 +33,28 @@
   #close { position: absolute; top: 2px; right: 4px; border: 0; background: #1d1b2e; color: #f3f0ff;
     width: 18px; height: 18px; border-radius: 9px; font-size: 11px; line-height: 18px; padding: 0;
     opacity: .35; cursor: pointer; z-index: 2; }
-  #close:hover, #mute:hover { opacity: 1; }
-  #mute { position: absolute; top: 2px; right: 26px; border: 0; background: #1d1b2e; color: #f3f0ff;
+  #close:hover, #mute:hover, #gear:hover { opacity: 1; }
+  #gear { position: absolute; top: 2px; right: 26px; border: 0; background: #1d1b2e; color: #f3f0ff;
+    width: 18px; height: 18px; border-radius: 9px; font-size: 11px; line-height: 18px; padding: 0;
+    opacity: .35; cursor: pointer; z-index: 2; }
+  /* ♪ y la barrita de volumen, que se despliega al pasar el ratón */
+  #sound { position: absolute; top: 2px; right: 48px; z-index: 2; display: flex; flex-direction: row-reverse;
+    align-items: center; gap: 4px; }
+  #vol { width: 0; margin: 0; opacity: 0; accent-color: #8f7cf0; cursor: pointer; transition: width .15s, opacity .15s; }
+  #sound:hover #vol, #vol:focus { width: 70px; opacity: 1; }
+  #sound:hover #mute { opacity: 1; }
+  #mute { border: 0; background: #1d1b2e; color: #f3f0ff;
     min-width: 18px; height: 18px; border-radius: 9px; font-size: 10px; line-height: 18px; padding: 0 4px;
     opacity: .35; cursor: pointer; z-index: 2; }
 </style>
 </head>
 <body>
   <div id="mic">● Micrófono abierto</div>
-  <button id="mute"></button>
+  <div id="sound">
+    <button id="mute"></button>
+    <input id="vol" type="range" min="0" max="100" step="5" title="Volumen">
+  </div>
+  <button id="gear" title="Menú">⚙</button>
   <button id="close" title="Cerrar">×</button>
   <div id="top">
     <div id="bubble"></div>

@@ -5,9 +5,8 @@ const path = require('path');
 const crypto = require('crypto');
 const { MsEdgeTTS, OUTPUT_FORMAT } = require('msedge-tts');
 
-const VOZ = 'es-PE-CamilaNeural';
-const TONO = '+20Hz';      // un poco más agudo
-const VELOCIDAD = '+8%';   // levemente más rápido
+// Voz, tono y velocidad vienen de config.json (ver config.js); estos son solo el arranque
+const ajustes = { voz: 'es-PE-CamilaNeural', tono: '+20Hz', velocidad: '+8%' };
 
 const DIR = path.join(__dirname, 'voz'); // caché, fuera de git
 const FORMATO = OUTPUT_FORMAT.AUDIO_24KHZ_48KBITRATE_MONO_MP3;
@@ -15,7 +14,7 @@ const LIMITE_MS = 20000;                 // tope de una generación, para no dej
 const enCurso = new Map();               // archivo -> promesa, para no generar dos veces lo mismo
 
 function archivo(texto) {
-  const hash = crypto.createHash('sha1').update([VOZ, TONO, VELOCIDAD, texto].join('\n')).digest('hex');
+  const hash = crypto.createHash('sha1').update([ajustes.voz, ajustes.tono, ajustes.velocidad, texto].join('\n')).digest('hex');
   return path.join(DIR, `${hash}.mp3`);
 }
 
@@ -29,7 +28,7 @@ let cliente = null; // promesa del MsEdgeTTS ya conectado
 function conectar() {
   if (!cliente) {
     const tts = new MsEdgeTTS();
-    cliente = tts.setMetadata(VOZ, FORMATO).then(() => tts);
+    cliente = tts.setMetadata(ajustes.voz, FORMATO).then(() => tts);
     cliente.catch(() => { cliente = null; });
   }
   return cliente;
@@ -42,7 +41,7 @@ function calentar() {
   if (Date.now() - ultimoIntento < 15000) return;
   ultimoIntento = Date.now();
   // el {} es necesario: sin él, la librería falla al repetir setMetadata
-  conectar().then((tts) => tts.setMetadata(VOZ, FORMATO, {})).catch(() => {});
+  conectar().then((tts) => tts.setMetadata(ajustes.voz, FORMATO, {})).catch(() => {});
 }
 
 async function generar(texto) {
@@ -50,7 +49,7 @@ async function generar(texto) {
   try {
     const audio = (async () => {
       const tts = await conectar();
-      const { audioStream } = tts.toStream(escapar(texto), { pitch: TONO, rate: VELOCIDAD });
+      const { audioStream } = tts.toStream(escapar(texto), { pitch: ajustes.tono, rate: ajustes.velocidad });
       const partes = [];
       for await (const parte of audioStream) partes.push(parte);
       return Buffer.concat(partes);
@@ -90,4 +89,38 @@ function decir(texto, { guardar = true } = {}) {
   return promesa;
 }
 
-module.exports = { decir, calentar, VOZ, TONO, VELOCIDAD };
+// Cambia voz, tono o velocidad. Con otra voz se descarta la conexión (la próxima frase abre una nueva).
+// Devuelve true si algo cambió.
+function configurar({ voz, tono, velocidad }) {
+  const nuevos = { voz, tono, velocidad };
+  const cambio = Object.keys(nuevos).some((k) => nuevos[k] && nuevos[k] !== ajustes[k]);
+  if (!cambio) return false;
+  const otraVoz = voz && voz !== ajustes.voz;
+  for (const k of Object.keys(nuevos)) if (nuevos[k]) ajustes[k] = nuevos[k];
+  if (otraVoz && cliente) {
+    const viejo = cliente;
+    cliente = null;
+    viejo.then((tts) => tts.close()).catch(() => {});
+  }
+  ultimoIntento = 0;
+  return true;
+}
+
+// Voces neuronales en español disponibles: [{ id, nombre, pais }]. Se piden una vez al servicio.
+let listaVoces = null;
+function voces() {
+  if (!listaVoces) {
+    listaVoces = new MsEdgeTTS().getVoices().then((todas) => todas
+      .filter((v) => /^es-/.test(v.ShortName))
+      .map((v) => ({
+        id: v.ShortName,
+        nombre: v.ShortName.split('-')[2].replace(/(Multilingual)?Neural$/, ''),
+        pais: (v.FriendlyName.match(/Spanish \(([^)]+)\)/) || [])[1] || v.Locale,
+      }))
+      .sort((a, b) => a.pais.localeCompare(b.pais) || a.nombre.localeCompare(b.nombre)));
+    listaVoces.catch(() => { listaVoces = null; });
+  }
+  return listaVoces;
+}
+
+module.exports = { decir, calentar, configurar, voces };

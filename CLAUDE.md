@@ -16,7 +16,9 @@ Proyecto personal. Windows, Electron, JavaScript plano (sin framework). Rama `3d
 Claude Code (hooks con curl) → POST http://127.0.0.1:4577/event → server.js → main.js → IPC → src/renderer.js → src/avatar.js
 
 - `server.js`: servidor HTTP local. Escucha SOLO en 127.0.0.1:4577. Node puro, sin Electron.
-- `main.js`: ventana transparente, sin marco, siempre visible, abajo a la derecha (300x500; los 130 px de arriba son para el globo y la cajita). Reenvía cada evento al renderer por IPC (`hadita-event`) y la posición del cursor cada 66 ms (`hadita-cursor`). Usa `sandbox: false` para que el preload tenga `fs`. `setContentProtection(true)` la oculta al compartir pantalla; el atajo global Ctrl+Alt+H la oculta y la muestra.
+- `main.js`: ventana transparente, sin marco, siempre visible, abajo a la derecha o donde la dejé (300x500 en tamaño mediano; los 130 px de arriba son para el globo y la cajita). Crea el ícono de la bandeja y su menú. Reenvía cada evento al renderer por IPC (`hadita-event`) y la posición del cursor cada 66 ms (`hadita-cursor`). Usa `sandbox: false` para que el preload tenga `fs`. `setContentProtection(true)` la oculta al compartir pantalla; el atajo global Ctrl+Alt+H la oculta y la muestra.
+- `config.js`: lee, valida y guarda `config.json`, y avisa de cada cambio. Node puro, sin Electron.
+- `icono.js`: ícono de la bandeja, dibujado desde el sprite pixel art original.
 - `voz.js`: voz neuronal con `msedge-tts` y caché en disco. Node puro, sin Electron.
 - `charla.js`: conversación; ejecuta `claude -p`, guarda el historial y clasifica cada mensaje en charla o encargo. Node puro, sin Electron.
 - `sesiones.js`: registro de sesiones de Claude Code vistas por los hooks. Node puro, sin Electron.
@@ -26,7 +28,9 @@ Claude Code (hooks con curl) → POST http://127.0.0.1:4577/event → server.js 
 - `frases.json`: frases de saludo, despedida y regreso, para editar a mano.
 - `preload.js`: expone `window.hadita.loadModel`, `frases`, `decir`, `preguntar`, `confirmar`, `onTarea`, `transcribir`, `onEscuchar`, `onEvent`, `onCursor`, `focus`, `moveBy` y `quit`. `loadModel` lee `assets/hadita.vrm` con `fs` y lo devuelve como ArrayBuffer (nunca fetch a file://).
 - `src/renderer.js`: estados por sesión, globo, aura, sonido, voz, clic y arrastre. Le habla al avatar solo por `mood` (`state`, `asleep`, `talking`, `greeting`, `mouthLevel`), `hop()` y `lookAtCursor()`.
-- `src/avatar.js`: todo lo 3D con `three` y `@pixiv/three-vrm`. Carga con `GLTFLoader.parseAsync` + `VRMLoaderPlugin`, encuadre, poses, alas y bucle a 30 fps.
+- `src/avatar.js`: todo lo 3D con `three` y `@pixiv/three-vrm`. Carga con `GLTFLoader.parseAsync` + `VRMLoaderPlugin`, encuadre, clips de animación, poses por código, alas y bucle a 30 fps.
+- `src/animacion.js`: carga clips `.vrma` y `.fbx` de Mixamo adaptados al VRM.
+- `assets/anim/`: los clips de animación (los descargo yo; ver «Clips de animación»).
 - `index.html`: estructura y CSS. Carga `dist/renderer.js`. Tiene CSP: sin scripts inline; `img-src` y `connect-src` permiten `blob:` para las texturas del VRM.
 - `assets/hadita.vrm`: mi avatar (VRM 1.0, hecho en VRoid).
 - `hooks/`: `notify.js` y un ejemplo de settings. NO los uso; mis hooks reales usan curl.
@@ -49,11 +53,11 @@ Dos formatos llegan al mismo endpoint:
 - Un estado por sesión, en un `Map` por `session_id`. Se muestra el más urgente: error > waiting > working > done > idle.
 - Aura (`drop-shadow` sobre el canvas): working azul, waiting ámbar, done verde, error rojo, idle sin aura. El globo siempre dice el estado en texto.
 - Los avisos (campanita, saltito, voz) solo saltan cuando el estado de una sesión CAMBIA a waiting, done o error.
-- Botón ♪ silencia campanita y voz (corta la frase que esté sonando) y se guarda en localStorage.
+- Botón ♪ silencia campanita y voz (corta la frase que esté sonando). Al pasar el ratón sobre él se despliega la barrita de volumen (`#vol`): se aplica al moverla, suena una nota de muestra al soltarla y entonces se guarda. Silencio y volumen van a `config.json`.
 
 ## Voz
 
-- Neuronal y gratuita: `voz.js` usa `msedge-tts` (servicio Read Aloud de Edge, necesita internet). `VOZ` (`es-PE-CamilaNeural`), `TONO` y `VELOCIDAD` son constantes al inicio del archivo.
+- Neuronal y gratuita: `voz.js` usa `msedge-tts` (servicio Read Aloud de Edge, necesita internet). Voz (`es-PE-CamilaNeural` por defecto), tono, velocidad y volumen vienen de `config.json`; al cambiar la voz se descarta la conexión y se vuelven a generar las frases fijas.
 - Caché en `voz/` (fuera de git): un mp3 por frase, con nombre = sha1 de voz + tono + velocidad + texto. Si existe, no se vuelve a generar.
 - Flujo: el renderer llama `window.hadita.decir(texto)` (IPC `hadita-decir`); main devuelve los bytes del mp3 y el renderer los reproduce con Web Audio, una frase a la vez.
 - Respaldo: si falla o tarda más de 3 s, main devuelve `null` y el renderer usa `speechSynthesis`; la generación sigue en segundo plano y queda en caché.
@@ -100,15 +104,24 @@ Dos formatos llegan al mismo endpoint:
 - Indicador rojo «● Micrófono abierto» (`#mic`) visible mientras dura la captura.
 - Permisos: `session.setPermissionRequestHandler` en `main.js` solo concede `media` de audio.
 
+## Configuración
+
+- `config.json` en la carpeta de datos de la app (`%APPDATA%/hadita`), creado con valores por defecto: `voz`, `tono`, `velocidad`, `volumen` (0 a 1), `tamano` (chico, mediano o grande), `posicion` y `silencio`, más un bloque por función futura (`pomodoro`, `git`, `resumen`, `uso`), aún sin usar.
+- Se aplica sin reiniciar: main vigila el archivo (`fs.watchFile`), lo valida campo a campo y manda la configuración al renderer (IPC `hadita-config`). Un JSON a medio editar se ignora.
+- Tamaño: zoom de la ventana (`setZoomFactor` 0.8 / 1 / 1.25) y ventana escalada; al cambiarlo, la esquina inferior derecha queda fija y el avatar ajusta su resolución (`resize()`).
+- Posición: se guarda al soltar el arrastre y se restaura al arrancar si sigue cayendo en alguna pantalla.
+- Ícono en la bandeja (clic: mostrar u ocultar) con menú: mostrar/ocultar, silenciar, tamaño, voz (voces en español del servicio, agrupadas por país), abrir configuración y salir. El botón ⚙ junto a la × abre el mismo menú.
+- «Salir» del menú se despide igual que la ×.
+
 ## Clic y arrastre
 
 - Clic en la hadita (sin arrastrar): abre o cierra la cajita de la charla.
 - Clic en el globo: `main.js` ejecuta `code "<cwd>"` de la sesión mostrada (la más urgente) para traer su VS Code al frente. Sin `cwd` no hace nada.
-- El arrastre es manual sobre el canvas (`pointermove` → IPC `hadita-move`). No volver a poner `-webkit-app-region: drag`: en Windows se come los clics.
+- El arrastre es manual sobre el canvas: el renderer avisa `inicio`, `mover` y `fin` (IPC `hadita-drag`) y main mueve la ventana con la posición real del cursor, así funciona con cualquier zoom. Al soltar se guarda la posición. No volver a poner `-webkit-app-region: drag`: en Windows se come los clics.
 
 ## Avatar
 
-- Canvas WebGL de 300x370 con `alpha: true` y fondo transparente; cámara encuadrada desde la cabeza hasta media pierna (según la caja del modelo), con luz direccional de frente para que se vea la cara.
+- Canvas WebGL de 300x370 con `alpha: true` y fondo transparente; cámara encuadrada de cuerpo entero, con los pies (según la caja del modelo; para verla más grande, tamaño grande), con luz direccional de frente para que se vea la cara.
 - Bucle limitado a 30 fps; `vrm.update(delta)` en cada cuadro (huesos, mirada, expresiones y física del pelo).
 - El modelo viene en pose T: los brazos se bajan con `leftUpperArm.z = -ARM_DOWN` y `rightUpperArm.z = +ARM_DOWN` (1.32, huesos normalizados) y `ARM_FORWARD` los adelanta un poco para no atravesar el vestido.
 - Vida básica: respiración, flotar, parpadeo aleatorio cada 2 a 6 s (`blink`) y mirada al cursor con `vrm.lookAt` más un giro leve del cuello.
@@ -118,12 +131,21 @@ Dos formatos llegan al mismo endpoint:
 - Boca: la expresión `aa` sigue el volumen real del audio (`AnalyserNode`, vía `mood.mouthLevel`); con `speechSynthesis` oscila entre 0 y 1. Vuelve a 0 al terminar.
 - Alas: dos planos lilas translúcidos (`makeWing`) colgados del hueso `chest`; aletean más rápido en working.
 
+## Clips de animación
+
+- `src/animacion.js` convierte archivos de `assets/anim/` en clips para los huesos normalizados del VRM: `.vrma` con `@pixiv/three-vrm-animation` (solo huesos; expresiones y mirada siguen por código) y `.fbx` de Mixamo con `FBXLoader` y el adaptador del ejemplo oficial de three-vrm (mapa de huesos `mixamorig*` → VRM).
+- Mapa estado → archivo en `config.json`, bloque `animaciones`: `idle`, `working`, `waiting`, `done`, `estirarse` y `pensar` (este para el estado `thinking`). El valor es el nombre sin extensión; se busca `.vrma` y luego `.fbx`. Por defecto: `idle`, `teclear`, `saludar`, `celebrar`, `estirarse`, `pensar`. Si cambia el mapa, se recargan sin reiniciar; un archivo nuevo en la carpeta necesita Ctrl+R.
+- Un `AnimationMixer` sobre `vrm.scene`, con crossfade de 0,3 s (`FUNDIDO`) entre clips. Al pasar a un estado sin clip, el clip se desvanece y la pose por código sigue desde ahí: cada hueso se acerca a su objetivo (`slerp`) y los que no tienen objetivo vuelven al reposo.
+- Sin clip para el estado (o dormida, escuchando, error), todo sigue como antes, por código. Al saludar (`mood.greeting`) usa el clip de `waiting` si existe.
+- `estirarse` se toca una sola vez: al despertar y, en idle, cada 4 a 8 min.
+- Encima de cualquier clip siguen el parpadeo, las expresiones, la boca, la mirada al cursor (ojos con `vrm.lookAt` y un giro del cuello aplicado después del mixer), el flotar, el saltito y las alas.
+
 ## Reglas
 
 - No tocar `~/.claude/settings.json` sin preguntarme. Ahí cada hook manda a dos destinos: mi oficina pixel (localhost:3777) y la hadita (127.0.0.1:4577). La oficina es otro proyecto y no se rompe.
 - Usar siempre `127.0.0.1`, no `localhost`, para la hadita.
 - Nunca bloquear a Claude Code: los hooks deben fallar en silencio si la hadita está cerrada.
-- Mantenerlo simple: sin TypeScript y sin dependencias nuevas, salvo que yo lo pida. Las únicas son `three`, `@pixiv/three-vrm`, `msedge-tts`, `@huggingface/transformers` y `esbuild`.
+- Mantenerlo simple: sin TypeScript y sin dependencias nuevas, salvo que yo lo pida. Las únicas son `three`, `@pixiv/three-vrm`, `@pixiv/three-vrm-animation`, `msedge-tts`, `@huggingface/transformers` y `esbuild`.
 - Textos de la interfaz y comentarios en español.
 
 ## Pendientes

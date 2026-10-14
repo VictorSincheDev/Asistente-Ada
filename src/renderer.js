@@ -1,4 +1,4 @@
-import { initAvatar, mood, hop, lookAtCursor } from './avatar.js';
+import { initAvatar, mood, hop, lookAtCursor, resize, loadClips } from './avatar.js';
 import { abrirMicro } from './oido.js';
 
 const SLEEP_MS = 5 * 60 * 1000;  // inactiva este rato → se duerme
@@ -58,17 +58,57 @@ function updateSleep() {
 updateSleep();
 
 // ---------- Avisos: sonido, saltito y voz ----------
+// silencio y volumen vienen de config.json (main avisa cada vez que cambian)
 let muted = false;
-try { muted = localStorage.getItem('hadita-muted') === '1'; } catch {}
+let volume = 1;
 const muteBtn = document.getElementById('mute');
 function paintMute() { muteBtn.textContent = muted ? 'off' : '♪'; muteBtn.title = muted ? 'Activar sonido' : 'Silenciar'; }
 paintMute();
-muteBtn.addEventListener('click', () => {
-  muted = !muted;
-  try { localStorage.setItem('hadita-muted', muted ? '1' : '0'); } catch {}
-  if (muted) stopVoice();
-  paintMute();
+muteBtn.addEventListener('click', () => { if (window.hadita) window.hadita.silenciar(!muted); });
+
+// Barrita de volumen: se oye al moverla y se guarda al soltarla
+const volSlider = document.getElementById('vol');
+function setVolume(v) {
+  volume = v;
+  if (voiceGain) voiceGain.gain.value = v;
+  volSlider.title = `Volumen ${Math.round(v * 100)}%`;
+}
+volSlider.addEventListener('input', () => setVolume(volSlider.value / 100));
+volSlider.addEventListener('change', () => {
+  if (window.hadita) window.hadita.volumen(volSlider.value / 100);
+  if (!muted) chime([880]); // muestra de cómo suena
+  volSlider.blur();
 });
+
+let lastSize = null;
+let animMap = null;     // config.animaciones vigente
+let avatarReady = false;
+function applyConfig(c) {
+  if (c.silencio && !muted) stopVoice();
+  muted = c.silencio;
+  setVolume(c.volumen);
+  if (document.activeElement !== volSlider) volSlider.value = Math.round(c.volumen * 100);
+  paintMute();
+  // nuevo tamaño: el zoom ya cambió, falta ajustar la resolución del canvas
+  if (lastSize && c.tamano !== lastSize) setTimeout(resize, 50);
+  lastSize = c.tamano;
+  // otro mapa de clips: se vuelven a cargar
+  if (JSON.stringify(c.animaciones) !== JSON.stringify(animMap)) {
+    animMap = c.animaciones;
+    if (avatarReady) loadAnimations();
+  }
+}
+
+// Lee de assets/anim/ los clips del mapa; los que falten quedan con movimiento por código
+async function loadAnimations() {
+  const list = [];
+  for (const [key, name] of Object.entries(animMap || {})) {
+    const file = name ? await window.hadita.leerAnimacion(name) : null;
+    if (file) list.push({ key, ...file });
+  }
+  const loaded = await loadClips(list);
+  console.log('Animaciones:', loaded.length ? loaded.join(', ') : 'ninguna (todo por código)');
+}
 
 let audio;
 function chime(notes) {
@@ -82,7 +122,7 @@ function chime(notes) {
       o.type = 'triangle';
       o.frequency.value = freq;
       g.gain.setValueAtTime(0.0001, t);
-      g.gain.exponentialRampToValueAtTime(0.15, t + 0.02);
+      g.gain.exponentialRampToValueAtTime(Math.max(0.0002, 0.15 * volume), t + 0.02);
       g.gain.exponentialRampToValueAtTime(0.0001, t + 0.25);
       o.connect(g).connect(audio.destination);
       o.start(t);
@@ -94,6 +134,7 @@ function chime(notes) {
 // ---------- Voz: neuronal (la genera main) y, de respaldo, speechSynthesis ----------
 let voiceQueue = Promise.resolve(); // una frase a la vez
 let voiceSource = null;
+let voiceGain = null;
 let voiceTurn = 0; // cambia al silenciar, para descartar lo que estaba en cola
 
 function stopVoice() {
@@ -128,7 +169,10 @@ async function playVoice(bytes) {
   analyser.fftSize = 512;
   const samples = new Uint8Array(analyser.fftSize);
   source.buffer = buffer;
-  source.connect(analyser).connect(audio.destination);
+  voiceGain = audio.createGain();
+  voiceGain.gain.value = volume;
+  // el analizador va antes del volumen: la boca se mueve igual aunque el volumen esté bajo
+  source.connect(analyser).connect(voiceGain).connect(audio.destination);
   mood.mouthLevel = () => {
     analyser.getByteTimeDomainData(samples);
     let sum = 0;
@@ -149,6 +193,7 @@ function speakFallback(text) {
   u.lang = es ? es.lang : 'es-MX';
   u.rate = 1.05;
   u.pitch = 1.3;
+  u.volume = volume;
   // mueve la boca mientras dura la frase
   u.onstart = () => { mood.talking = true; };
   return new Promise((resolve) => {
@@ -410,6 +455,7 @@ let drag = null;
 canvas.addEventListener('pointerdown', (e) => {
   if (e.button !== 0) return;
   drag = { x: e.screenX, y: e.screenY, moved: false };
+  if (window.hadita) window.hadita.drag('inicio');
   canvas.setPointerCapture(e.pointerId);
 });
 canvas.addEventListener('pointermove', (e) => {
@@ -417,20 +463,25 @@ canvas.addEventListener('pointermove', (e) => {
   const dx = e.screenX - drag.x, dy = e.screenY - drag.y;
   if (!drag.moved && Math.hypot(dx, dy) < 4) return; // tolerancia para que un clic no cuente como arrastre
   drag.moved = true;
-  drag.x = e.screenX;
-  drag.y = e.screenY;
-  if (window.hadita) window.hadita.moveBy(dx, dy);
+  if (window.hadita) window.hadita.drag('mover'); // main calcula la posición con el cursor real
 });
 canvas.addEventListener('pointerup', () => {
   const wasClick = drag && !drag.moved;
+  if (drag && drag.moved && window.hadita) window.hadita.drag('fin'); // guarda la posición
   drag = null;
   if (wasClick) toggleAsk(!ask.classList.contains('show'));
 });
-canvas.addEventListener('pointercancel', () => { drag = null; });
+canvas.addEventListener('pointercancel', () => {
+  if (drag && drag.moved && window.hadita) window.hadita.drag('fin');
+  drag = null;
+});
 
 if (window.hadita) {
-  window.hadita.loadModel()
-    .then((buffer) => initAvatar(canvas, buffer))
+  window.hadita.onConfig(applyConfig);
+  // la configuración llega antes del saludo, para que respete el silencio
+  Promise.all([window.hadita.leerConfig().then(applyConfig), window.hadita.loadModel()])
+    .then(([, buffer]) => initAvatar(canvas, buffer))
+    .then(() => { avatarReady = true; return loadAnimations(); })
     .then(greet)
     .catch((e) => {
       console.error('No pude cargar el avatar:', e);
@@ -446,6 +497,8 @@ if (window.hadita) {
   window.hadita.onTarea(say); // resumen de una tarea que terminó
   window.hadita.onEvent(handle);
   document.getElementById('close').addEventListener('click', farewell);
+  document.getElementById('gear').addEventListener('click', () => window.hadita.menu());
+  window.hadita.onSalir(farewell); // «Salir» del menú: también se despide
 }
 window.__haditaHandle = handle; // para pruebas
 window.__haditaHeard = heard;

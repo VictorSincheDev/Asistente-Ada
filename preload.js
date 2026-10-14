@@ -22,6 +22,23 @@ contextBridge.exposeInMainWorld('hadita', {
   onCursor: (cb) => ipcRenderer.on('hadita-cursor', (_e, x, y) => cb(x, y)),
   onEvent: (cb) => ipcRenderer.on('hadita-event', (_e, evt) => cb(evt)),
   focus: (cwd) => ipcRenderer.send('hadita-focus', cwd),
-  moveBy: (dx, dy) => ipcRenderer.send('hadita-move', dx, dy),
+  drag: (fase) => ipcRenderer.send('hadita-drag', fase), // 'inicio' | 'mover' | 'fin'
+  leerConfig: () => ipcRenderer.invoke('hadita-config-leer'),
+  onConfig: (cb) => ipcRenderer.on('hadita-config', (_e, c) => cb(c)),
+  silenciar: (si) => ipcRenderer.send('hadita-silencio', si),
+  volumen: (v) => ipcRenderer.send('hadita-volumen', v),
+  menu: () => ipcRenderer.send('hadita-menu'),
+  onSalir: (cb) => ipcRenderer.on('hadita-salir', () => cb()),
+  // clip de animación de assets/anim/: primero <nombre>.vrma, luego <nombre>.fbx; null si no hay
+  leerAnimacion: async (nombre) => {
+    if (typeof nombre !== 'string' || !/^[\w\- ]+$/.test(nombre)) return null;
+    for (const ext of ['vrma', 'fbx']) {
+      try {
+        const b = await fs.promises.readFile(path.join(__dirname, 'assets', 'anim', `${nombre}.${ext}`));
+        return { ext, buffer: b.buffer.slice(b.byteOffset, b.byteOffset + b.byteLength) };
+      } catch {}
+    }
+    return null;
+  },
   quit: () => ipcRenderer.send('hadita-quit'),
 });
