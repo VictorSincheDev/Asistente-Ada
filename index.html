@@ -7,12 +7,28 @@
 <style>
   html, body { margin: 0; height: 100%; background: transparent; overflow: hidden; user-select: none;
     font-family: "Segoe UI", system-ui, sans-serif; }
-  #bubble { position: absolute; top: 24px; left: 50%; transform: translateX(-50%); z-index: 1;
-    width: max-content; max-width: 260px; padding: 6px 10px; border-radius: 10px;
+  #top { position: absolute; top: 24px; left: 0; right: 0; z-index: 1; display: flex; flex-direction: column;
+    align-items: center; gap: 4px; pointer-events: none; }
+  #top > * { pointer-events: auto; }
+  #bubble { max-width: 260px; cursor: pointer; padding: 6px 10px; border-radius: 10px;
     background: #1d1b2e; color: #f3f0ff; font-size: 12px; line-height: 1.3; text-align: center;
     border: 2px solid #8f7cf0; opacity: 0; transition: opacity .2s; overflow: hidden;
-    display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; }
+    display: -webkit-box; -webkit-line-clamp: 5; -webkit-box-orient: vertical; }
   #bubble.show { opacity: 1; }
+  #bubble.full { display: block; white-space: pre-line; } /* la confirmación de una tarea se muestra entera */
+  #confirm { display: none; gap: 6px; }
+  #confirm.show { display: flex; }
+  #confirm button { border: 2px solid #8f7cf0; border-radius: 10px; padding: 3px 14px; font: inherit; font-size: 12px;
+    background: #1d1b2e; color: #f3f0ff; cursor: pointer; }
+  #confirm #yes { background: #8f7cf0; }
+  #ask { display: none; width: 230px; padding: 5px 9px; border-radius: 10px; border: 2px solid #8f7cf0;
+    background: #f3f0ff; color: #1d1b2e; font: inherit; font-size: 12px; outline: none; }
+  #ask.show { display: block; }
+  #ask:disabled { opacity: .6; }
+  #mic { display: none; position: absolute; top: 2px; left: 4px; z-index: 2; height: 18px; padding: 0 7px;
+    border-radius: 9px; background: #d92d3a; color: #fff; font-size: 10px; line-height: 18px; }
+  #mic.show { display: block; animation: mic 1s ease-in-out infinite; }
+  @keyframes mic { 50% { opacity: .55; } }
   #avatar { position: absolute; left: 0; bottom: 0; width: 300px; height: 370px; cursor: pointer; }
   #close { position: absolute; top: 2px; right: 4px; border: 0; background: #1d1b2e; color: #f3f0ff;
     width: 18px; height: 18px; border-radius: 9px; font-size: 11px; line-height: 18px; padding: 0;
@@ -24,9 +40,14 @@
 </style>
 </head>
 <body>
+  <div id="mic">● Micrófono abierto</div>
   <button id="mute"></button>
   <button id="close" title="Cerrar">×</button>
-  <div id="bubble"></div>
+  <div id="top">
+    <div id="bubble"></div>
+    <div id="confirm"><button id="yes">Sí</button><button id="no">No</button></div>
+    <input id="ask" type="text" maxlength="500" placeholder="Escríbeme algo…" autocomplete="off" spellcheck="false">
+  </div>
   <canvas id="avatar"></canvas>
   <script src="dist/renderer.js"></script>
 </body>

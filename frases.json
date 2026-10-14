@@ -1,0 +1,27 @@
+{
+  "manana": [
+    "¡Buenos días, Víctor! ¿En qué te puedo ayudar ahorita?",
+    "¡Hola, Víctor! Buenos días, ya estoy lista.",
+    "¡Buen día! ¿Con qué empezamos hoy?"
+  ],
+  "tarde": [
+    "¡Buenas tardes, Víctor! ¿En qué te puedo ayudar ahorita?",
+    "¡Hola, Víctor! ¿Cómo va la tarde?",
+    "¡Aquí estoy! ¿Seguimos con lo de hoy?"
+  ],
+  "noche": [
+    "¡Buenas noches, Víctor! ¿En qué te puedo ayudar ahorita?",
+    "¡Hola, Víctor! ¿Trabajando hasta tarde?",
+    "¡Aquí estoy! Te acompaño un rato más."
+  ],
+  "despedida": [
+    "¡Hasta luego, Víctor!",
+    "¡Nos vemos pronto!",
+    "Descansa, Víctor. ¡Chau!"
+  ],
+  "regreso": [
+    "¡Volviste! Te estaba esperando.",
+    "¡Hola de nuevo, Víctor!",
+    "¡Qué bueno que volviste! ¿Seguimos?"
+  ]
+}

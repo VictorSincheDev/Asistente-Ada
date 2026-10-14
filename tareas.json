@@ -1,0 +1,5 @@
+{
+  "herramientas": ["Read", "Glob", "Grep", "Edit", "Write"],
+  "limiteMinutos": 15,
+  "proyectos": {}
+}

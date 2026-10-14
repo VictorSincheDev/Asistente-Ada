@@ -4,6 +4,8 @@ import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
 import { VRMLoaderPlugin, VRMUtils } from '@pixiv/three-vrm';
 
 const FPS = 30;
+const ARM_DOWN = 1.32;     // brazos en descanso, pegados al cuerpo
+const ARM_FORWARD = -0.12; // un poco hacia delante para no atravesar el vestido
 
 // Por estado: expresión, velocidad del balanceo, velocidad del aleteo e inclinación de la cabeza
 const POSES = {
@@ -12,11 +14,16 @@ const POSES = {
   waiting: { expr: 'surprised', sway: 1.2, flap: 7,  tilt: 0 },
   done:    { expr: 'happy',     sway: 1.2, flap: 6,  tilt: 0 },
   error:   { expr: 'sad',       sway: 0.6, flap: 2,  tilt: 0 },
+  thinking: { expr: 'neutral',  sway: 1.0, flap: 5,  tilt: 0.2 }, // pensando una respuesta de la charla
+  // escuchando: atenta (un poco de sorpresa) e inclinada hacia delante
+  listening: { expr: 'surprised', weight: 0.3, sway: 0.5, flap: 8, tilt: 0, lean: 0.14 },
 };
 const EXPRESSIONS = ['relaxed', 'neutral', 'surprised', 'happy', 'sad'];
 
 // Lo que el resto del renderer le dice al avatar; se lee en cada cuadro
-export const mood = { state: 'idle', asleep: false, talking: false };
+// mouthLevel: función que da el volumen de la voz (0 a 1) mientras suena un audio; si no, null
+// greeting: saluda con el brazo y cara feliz, sea cual sea el estado
+export const mood = { state: 'idle', asleep: false, talking: false, mouthLevel: null, greeting: false };
 
 let vrm = null;
 let renderer, scene, camera, lookTarget;
@@ -27,6 +34,7 @@ const weights = Object.fromEntries(EXPRESSIONS.map((n) => [n, 0]));
 let swayPhase = 0, flapPhase = 0, mouth = 0;
 let nextBlink = 3, blinkStart = -1;
 let hopLeft = 0;
+let lean = 0;
 
 const clamp = (v, a, b) => Math.min(b, Math.max(a, v));
 const bone = (name) => vrm.humanoid.getNormalizedBoneNode(name);
@@ -67,9 +75,9 @@ export async function initAvatar(canvas, buffer) {
   renderer.setSize(canvas.clientWidth, canvas.clientHeight, false);
 
   scene = new THREE.Scene();
-  const sun = new THREE.DirectionalLight(0xffffff, Math.PI);
-  sun.position.set(0.5, 1, 1);
-  scene.add(sun, new THREE.AmbientLight(0xffffff, 0.4));
+  const sun = new THREE.DirectionalLight(0xffffff, Math.PI * 1.15);
+  sun.position.set(0, 0.4, 1); // de frente, para que la cara no quede en sombra
+  scene.add(sun, new THREE.AmbientLight(0xffffff, 0.5));
   lookTarget = new THREE.Object3D();
   scene.add(lookTarget);
 
@@ -82,11 +90,11 @@ export async function initAvatar(canvas, buffer) {
   scene.add(vrm.scene);
   vrm.lookAt.target = lookTarget;
 
-  // Encuadre de cuerpo entero, con aire arriba para el saltito y las alas
+  // Encuadre cercano: desde la cabeza (con aire para el saltito) hasta media pierna
   const box = new THREE.Box3().setFromObject(vrm.scene);
   const body = box.max.y - box.min.y;
-  const height = body * 1.13;
-  centerY = box.min.y - body * 0.03 + height / 2;
+  const height = body * 1.0;
+  centerY = box.max.y + body * 0.1 - height / 2;
   const fov = 20;
   camera = new THREE.PerspectiveCamera(fov, canvas.clientWidth / canvas.clientHeight, 0.1, 30);
   camera.position.set(0, centerY, (height / 2) / Math.tan(THREE.MathUtils.degToRad(fov / 2)));
@@ -94,8 +102,8 @@ export async function initAvatar(canvas, buffer) {
   metersPerPx = height / canvas.clientHeight;
 
   // El modelo viene en pose T: brazos abajo desde el primer cuadro
-  bone('leftUpperArm').rotation.z = -1.1;
-  bone('rightUpperArm').rotation.z = 1.1;
+  bone('leftUpperArm').rotation.set(ARM_FORWARD, 0, -ARM_DOWN);
+  bone('rightUpperArm').rotation.set(ARM_FORWARD, 0, ARM_DOWN);
 
   const back = bone('chest') || bone('upperChest') || bone('spine');
   wings = [makeWing(1), makeWing(-1)];
@@ -124,7 +132,9 @@ function update(dt, t) {
   // Expresión del estado
   const em = vrm.expressionManager;
   for (const name of EXPRESSIONS) {
-    const target = name === (asleep ? 'relaxed' : pose.expr) ? 1 : 0;
+    const special = asleep || mood.greeting;
+    const wanted = asleep ? 'relaxed' : mood.greeting ? 'happy' : pose.expr;
+    const target = name === wanted ? (special ? 1 : pose.weight ?? 1) : 0;
     weights[name] += (target - weights[name]) * k;
     em.setValue(name, weights[name]);
   }
@@ -141,8 +151,9 @@ function update(dt, t) {
   }
   em.setValue('blink', blink);
 
-  // Boca mientras habla
-  mouth = mood.talking ? 0.5 + 0.5 * Math.sin(t * 16) : mouth * (1 - k);
+  // Boca: sigue el volumen real del audio; con speechSynthesis (sin audio que medir) oscila
+  if (mood.mouthLevel) mouth += (mood.mouthLevel() - mouth) * (1 - Math.exp(-25 * dt));
+  else mouth = mood.talking ? 0.5 + 0.5 * Math.sin(t * 16) : mouth * (1 - k);
   em.setValue('aa', mouth);
 
   // Respiración y balanceo
@@ -150,7 +161,8 @@ function update(dt, t) {
   const breath = Math.sin(t * 1.7);
   bone('hips').rotation.z = sway * 0.03;
   bone('hips').rotation.y = Math.sin(swayPhase * 0.5) * 0.05;
-  bone('spine').rotation.x = breath * 0.025;
+  lean += ((asleep ? 0 : pose.lean || 0) - lean) * k;
+  bone('spine').rotation.x = breath * 0.025 + lean;
   bone('spine').rotation.z = -sway * 0.02;
   const chest = bone('chest');
   if (chest) chest.rotation.x = Math.sin(t * 1.7 + 0.5) * 0.02;
@@ -159,13 +171,14 @@ function update(dt, t) {
   lookTarget.position.lerp(look, k);
   const head = bone('head'), neck = bone('neck') || head;
   ease(head, 'z', pose.tilt);
-  ease(head, 'x', asleep ? 0.3 : pose.tilt * 0.6);
+  ease(head, 'x', asleep ? 0.3 : pose.tilt * 0.6 - lean * 0.6); // al inclinarse sigue mirando al frente
   ease(neck, 'y', asleep ? 0 : clamp(lookTarget.position.x, -1, 1) * 0.3);
 
   // Brazos: abajo; en waiting saluda con el derecho
-  const waving = mood.state === 'waiting' && !asleep;
-  ease(bone('leftUpperArm'), 'z', -1.1 + breath * 0.02);
-  ease(bone('rightUpperArm'), 'z', waving ? -0.35 : 1.1 - breath * 0.02);
+  const waving = (mood.state === 'waiting' || mood.greeting) && !asleep;
+  ease(bone('leftUpperArm'), 'z', -ARM_DOWN + breath * 0.015);
+  ease(bone('rightUpperArm'), 'z', waving ? -0.35 : ARM_DOWN - breath * 0.015);
+  ease(bone('rightUpperArm'), 'x', waving ? 0 : ARM_FORWARD);
   ease(bone('rightLowerArm'), 'z', waving ? -1.2 + Math.sin(t * 9) * 0.35 : 0);
 
   // Flota, y da dos saltitos cuando hay aviso
