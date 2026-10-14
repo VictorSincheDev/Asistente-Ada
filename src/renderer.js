@@ -40,6 +40,7 @@ function render() {
   bubble.classList.toggle('show', Boolean(text));
   bubble.classList.toggle('full', Boolean(chat && chat.full));
   mood.state = chat && chat.listening ? 'listening' : chat && chat.thinking ? 'thinking' : current;
+  if (mood.walking && (current !== 'idle' || chat) && window.hadita) window.hadita.pararPaseo(); // hay algo que hacer
   const aura = chat && chat.listening ? LISTEN_AURA : STATES[current].aura;
   canvas.style.filter = aura ? `drop-shadow(0 0 6px ${aura})` : 'none';
   updateSleep();
@@ -80,6 +81,19 @@ volSlider.addEventListener('change', () => {
   volSlider.blur();
 });
 
+// ---------- Paseo ----------
+// Cada `cadaMin` minutos (±50 %) intenta pasear, solo si está en idle, despierta y sin nada pendiente
+let walkTimer = null;
+let walkCfg = null;
+function scheduleWalk() {
+  clearTimeout(walkTimer);
+  if (!walkCfg || !walkCfg.activo) return;
+  walkTimer = setTimeout(() => {
+    if (current === 'idle' && !chat && !mood.asleep && !mic && !drag && window.hadita) window.hadita.pasear();
+    scheduleWalk();
+  }, walkCfg.cadaMin * 60000 * (0.5 + Math.random()));
+}
+
 let lastSize = null;
 let animMap = null;     // config.animaciones vigente
 let avatarReady = false;
@@ -92,6 +106,12 @@ function applyConfig(c) {
   // nuevo tamaño: el zoom ya cambió, falta ajustar la resolución del canvas
   if (lastSize && c.tamano !== lastSize) setTimeout(resize, 50);
   lastSize = c.tamano;
+  // la animación de caminar a ~250 px/s va a velocidad normal; más lento, pasos más lentos
+  mood.walkSpeed = Math.min(1.5, Math.max(0.4, c.pasear.velocidad / 250));
+  if (JSON.stringify(c.pasear) !== JSON.stringify(walkCfg)) {
+    walkCfg = c.pasear;
+    scheduleWalk();
+  }
   // otro mapa de clips: se vuelven a cargar
   if (JSON.stringify(c.animaciones) !== JSON.stringify(animMap)) {
     animMap = c.animaciones;
@@ -499,6 +519,10 @@ if (window.hadita) {
   document.getElementById('close').addEventListener('click', farewell);
   document.getElementById('gear').addEventListener('click', () => window.hadita.menu());
   window.hadita.onSalir(farewell); // «Salir» del menú: también se despide
+  window.hadita.onPaseo((dir) => {
+    mood.walking = dir;
+    if (dir && (current !== 'idle' || chat)) window.hadita.pararPaseo(); // pidió pasear justo cuando hay algo que hacer
+  });
 }
 window.__haditaHandle = handle; // para pruebas
 window.__haditaHeard = heard;

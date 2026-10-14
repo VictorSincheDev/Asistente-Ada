@@ -13,7 +13,9 @@ const DEFECTO = {
   silencio: false,
   // clip por estado: nombre de archivo en assets/anim/ sin extensión (se busca .vrma y luego .fbx).
   // Vacío o sin archivo: ese estado se mueve por código.
-  animaciones: { idle: 'idle', working: 'teclear', waiting: 'saludar', done: 'celebrar', estirarse: 'estirarse', pensar: 'pensar' },
+  animaciones: { idle: 'idle', working: 'teclear', waiting: 'saludar', done: 'celebrar', estirarse: 'estirarse', pensar: 'pensar', caminar: 'caminar' },
+  // paseo por el borde inferior de las pantallas: sola cada `cadaMin` minutos (aprox.) en idle; velocidad en px/s
+  pasear: { activo: true, cadaMin: 10, velocidad: 140 },
   // funciones futuras: cada una con su bloque
   pomodoro: { activo: false, trabajoMin: 25, descansoMin: 5 },
   git: { activo: false, repos: [] },
@@ -46,6 +48,9 @@ function normalizar(leido) {
   const p = c.posicion;
   c.posicion = esObjeto(p) && Number.isFinite(p.x) && Number.isFinite(p.y) ? { x: Math.round(p.x), y: Math.round(p.y) } : null;
   c.silencio = c.silencio === true;
+  c.pasear.activo = c.pasear.activo === true;
+  c.pasear.cadaMin = Number.isFinite(Number(c.pasear.cadaMin)) ? Math.max(1, Number(c.pasear.cadaMin)) : DEFECTO.pasear.cadaMin;
+  c.pasear.velocidad = Number.isFinite(Number(c.pasear.velocidad)) ? Math.min(600, Math.max(30, Number(c.pasear.velocidad))) : DEFECTO.pasear.velocidad;
   for (const [k, v] of Object.entries(c.animaciones)) {
     if (typeof v !== 'string' || !/^[\w\- ]*$/.test(v)) c.animaciones[k] = ''; // solo nombres, sin rutas
   }

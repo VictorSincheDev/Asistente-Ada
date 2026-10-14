@@ -29,6 +29,9 @@ contextBridge.exposeInMainWorld('hadita', {
   volumen: (v) => ipcRenderer.send('hadita-volumen', v),
   menu: () => ipcRenderer.send('hadita-menu'),
   onSalir: (cb) => ipcRenderer.on('hadita-salir', () => cb()),
+  pasear: () => ipcRenderer.send('hadita-pasear'),
+  pararPaseo: () => ipcRenderer.send('hadita-parar-paseo'),
+  onPaseo: (cb) => ipcRenderer.on('hadita-paseo', (_e, dir) => cb(dir)), // 1 derecha, -1 izquierda, 0 parada
   // clip de animación de assets/anim/: primero <nombre>.vrma, luego <nombre>.fbx; null si no hay
   leerAnimacion: async (nombre) => {
     if (typeof nombre !== 'string' || !/^[\w\- ]+$/.test(nombre)) return null;

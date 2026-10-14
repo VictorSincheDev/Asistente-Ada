@@ -113,6 +113,15 @@ Dos formatos llegan al mismo endpoint:
 - Ícono en la bandeja (clic: mostrar u ocultar) con menú: mostrar/ocultar, silenciar, tamaño, voz (voces en español del servicio, agrupadas por país), abrir configuración y salir. El botón ⚙ junto a la × abre el mismo menú.
 - «Salir» del menú se despide igual que la ×.
 
+## Paseo
+
+- La hadita camina por el borde inferior de las pantallas, sobre la barra de tareas: main mueve la ventana (`pasear()`, `paso()` y `terminarPaseo()` en `main.js`) hacia un punto al azar de cualquier pantalla, a 150 px o más; al cambiar de pantalla ajusta la altura con suavidad.
+- El renderer recibe la dirección (IPC `hadita-paseo`: 1, -1 o 0) y la pasa a `mood.walking`: suena el clip `caminar` y el modelo se pone de perfil hacia donde va. Sin clip, flota de lado.
+- `caminar` se usa «en el sitio»: `enSitio()` quita el avance horizontal de las caderas, así sirve aunque el FBX se haya bajado sin «In Place». El paso se ajusta a la velocidad (`mood.walkSpeed`).
+- Cuándo: sola cada `pasear.cadaMin` minutos (±50 %) si está en idle, despierta y sin nada pendiente; o desde el menú («Pasear ahora» / «Dejar de pasear»). «Pasear sola» lo activa o desactiva.
+- Se detiene en cuanto hay un estado distinto de idle, una charla, al agarrarla para arrastrarla o al ocultarla. Donde termina, se queda, y esa posición se guarda.
+- `config.json`, bloque `pasear`: `activo`, `cadaMin` y `velocidad` (px/s en tamaño mediano).
+
 ## Clic y arrastre
 
 - Clic en la hadita (sin arrastrar): abre o cierra la cajita de la charla.
@@ -134,7 +143,7 @@ Dos formatos llegan al mismo endpoint:
 ## Clips de animación
 
 - `src/animacion.js` convierte archivos de `assets/anim/` en clips para los huesos normalizados del VRM: `.vrma` con `@pixiv/three-vrm-animation` (solo huesos; expresiones y mirada siguen por código) y `.fbx` de Mixamo con `FBXLoader` y el adaptador del ejemplo oficial de three-vrm (mapa de huesos `mixamorig*` → VRM).
-- Mapa estado → archivo en `config.json`, bloque `animaciones`: `idle`, `working`, `waiting`, `done`, `estirarse` y `pensar` (este para el estado `thinking`). El valor es el nombre sin extensión; se busca `.vrma` y luego `.fbx`. Por defecto: `idle`, `teclear`, `saludar`, `celebrar`, `estirarse`, `pensar`. Si cambia el mapa, se recargan sin reiniciar; un archivo nuevo en la carpeta necesita Ctrl+R.
+- Mapa estado → archivo en `config.json`, bloque `animaciones`: `idle`, `working`, `waiting`, `done`, `estirarse`, `pensar` (este para el estado `thinking`) y `caminar` (para el paseo). El valor es el nombre sin extensión; se busca `.vrma` y luego `.fbx`. Por defecto: `idle`, `teclear`, `saludar`, `celebrar`, `estirarse`, `pensar`, `caminar`. Si cambia el mapa, se recargan sin reiniciar; un archivo nuevo en la carpeta necesita Ctrl+R.
 - Un `AnimationMixer` sobre `vrm.scene`, con crossfade de 0,3 s (`FUNDIDO`) entre clips. Al pasar a un estado sin clip, el clip se desvanece y la pose por código sigue desde ahí: cada hueso se acerca a su objetivo (`slerp`) y los que no tienen objetivo vuelven al reposo.
 - Sin clip para el estado (o dormida, escuchando, error), todo sigue como antes, por código. Al saludar (`mood.greeting`) usa el clip de `waiting` si existe.
 - `estirarse` se toca una sola vez: al despertar y, en idle, cada 4 a 8 min.

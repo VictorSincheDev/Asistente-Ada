@@ -108,3 +108,17 @@ export async function clipDesdeVRMA(buffer, vrm) {
   const { translation, rotation } = createVRMAnimationHumanoidTracks(animacion, vrm.humanoid, vrm.meta?.metaVersion ?? '1');
   return new THREE.AnimationClip('vrma', animacion.duration, [...translation.values(), ...rotation.values()]);
 }
+
+// Deja el clip "en el sitio": quita el avance horizontal de las caderas (x, z) y conserva el sube y baja.
+// Sirve para caminar aunque el FBX se haya bajado sin «In Place»; el desplazamiento lo hace la ventana.
+export function enSitio(clip, vrm) {
+  const nombre = `${vrm.humanoid.getNormalizedBoneNode('hips').name}.position`;
+  const track = clip.tracks.find((t) => t.name === nombre);
+  if (!track) return clip;
+  const v = track.values;
+  for (let i = 3; i < v.length; i += 3) {
+    v[i] = v[0];
+    v[i + 2] = v[2];
+  }
+  return clip;
+}

@@ -2,7 +2,7 @@
 import * as THREE from 'three';
 import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
 import { VRMLoaderPlugin, VRMUtils } from '@pixiv/three-vrm';
-import { clipDesdeFBX, clipDesdeVRMA } from './animacion.js';
+import { clipDesdeFBX, clipDesdeVRMA, enSitio } from './animacion.js';
 
 const FPS = 30;
 const ARM_DOWN = 1.32;     // brazos en descanso, pegados al cuerpo
@@ -24,7 +24,9 @@ const EXPRESSIONS = ['relaxed', 'neutral', 'surprised', 'happy', 'sad'];
 // Lo que el resto del renderer le dice al avatar; se lee en cada cuadro
 // mouthLevel: función que da el volumen de la voz (0 a 1) mientras suena un audio; si no, null
 // greeting: saluda con el brazo y cara feliz, sea cual sea el estado
-export const mood = { state: 'idle', asleep: false, talking: false, mouthLevel: null, greeting: false };
+// walking: 1 camina a la derecha, -1 a la izquierda, 0 quieta (la ventana la mueve main)
+// walkSpeed: velocidad de la animación de caminar, para que los pies acompañen al desplazamiento
+export const mood = { state: 'idle', asleep: false, talking: false, mouthLevel: null, greeting: false, walking: 0, walkSpeed: 1 };
 
 let vrm = null;
 let renderer, scene, camera, lookTarget;
@@ -64,7 +66,8 @@ export async function loadClips(list) {
   const clips = new Map();
   for (const { key, ext, buffer } of list) {
     try {
-      clips.set(key, ext === 'vrma' ? await clipDesdeVRMA(buffer, vrm) : clipDesdeFBX(buffer, vrm, alturaCaderas));
+      const clip = ext === 'vrma' ? await clipDesdeVRMA(buffer, vrm) : clipDesdeFBX(buffer, vrm, alturaCaderas);
+      clips.set(key, key === 'caminar' ? enSitio(clip, vrm) : clip); // el avance lo pone la ventana
     } catch (e) {
       console.error(`No pude cargar la animación «${key}»:`, e);
     }
@@ -93,6 +96,7 @@ function startStretch(t) {
 
 // Qué clip toca ahora (null = movimiento por código)
 function wantedClip(t) {
+  if (mood.walking) return actions.has('caminar') ? 'caminar' : null; // sin clip, flota de lado
   if (mood.asleep) return null;
   if (oneShot && t < oneShot.until) return oneShot.key;
   oneShot = null;
@@ -109,7 +113,7 @@ function switchClip(key) {
   const from = playing && actions.get(playing);
   const to = key && actions.get(key);
   if (to) {
-    to.reset().setEffectiveTimeScale(1).setEffectiveWeight(1).play();
+    to.reset().setEffectiveTimeScale(key === 'caminar' ? mood.walkSpeed : 1).setEffectiveWeight(1).play();
     if (from) from.crossFadeTo(to, FUNDIDO, false);
     else to.fadeIn(FUNDIDO);
   } else if (from) {
@@ -295,6 +299,8 @@ function update(dt, t) {
     hopLeft = Math.max(0, hopLeft - dt);
   }
   vrm.scene.position.y = y;
+  // al caminar se pone de perfil hacia donde va; quieta, de frente
+  vrm.scene.rotation.y += (mood.walking * Math.PI / 2 - vrm.scene.rotation.y) * (1 - Math.exp(-6 * dt));
 
   // Alas
   for (const w of wings) w.rotation.y = w.userData.side * (0.35 + Math.sin(flapPhase) * 0.4);

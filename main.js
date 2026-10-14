@@ -58,7 +58,7 @@ function createWindow() {
 
 function alternarVentana() {
   if (!win || win.isDestroyed()) return;
-  if (win.isVisible()) win.hide(); else win.showInactive();
+  if (win.isVisible()) { terminarPaseo(); win.hide(); } else win.showInactive();
 }
 
 // ---------- Configuración: se aplica en vivo ----------
@@ -78,6 +78,54 @@ function aplicarConfig(c, anterior) {
     }
     win.webContents.send('hadita-config', c);
   }
+  actualizarMenu();
+}
+
+// ---------- Paseo: la ventana camina por el borde inferior de las pantallas ----------
+// El renderer pone la animación de caminar y la gira; aquí solo se mueve la ventana.
+let paseo = null; // { x: destino, dir: 1 | -1, timer, antes }
+
+function pasear() {
+  if (paseo || !win || win.isDestroyed() || !win.isVisible()) return;
+  const b = win.getBounds();
+  // destino al azar en cualquier pantalla, a lo largo de su borde inferior, a 150 px o más
+  const pantallas = screen.getAllDisplays();
+  let x = b.x;
+  for (let intento = 0; intento < 10 && Math.abs(x - b.x) < 150; intento++) {
+    const { workArea: a } = pantallas[Math.floor(Math.random() * pantallas.length)];
+    x = Math.round(a.x + Math.random() * Math.max(0, a.width - b.width));
+  }
+  if (Math.abs(x - b.x) < 150) return;
+  paseo = { x, dir: Math.sign(x - b.x), antes: Date.now() };
+  paseo.timer = setInterval(paso, 33);
+  win.webContents.send('hadita-paseo', paseo.dir);
+  actualizarMenu();
+}
+
+function paso() {
+  if (!win || win.isDestroyed()) return terminarPaseo();
+  const ahora = Date.now();
+  const dt = Math.min(0.1, (ahora - paseo.antes) / 1000);
+  paseo.antes = ahora;
+  const b = win.getBounds();
+  const avance = Math.min(config.leer().pasear.velocidad * escala() * dt, Math.abs(paseo.x - b.x));
+  const x = b.x + paseo.dir * avance;
+  // los pies sobre la barra de tareas de la pantalla en la que está; al cambiar de pantalla baja o sube suave
+  const { workArea: a } = screen.getDisplayNearestPoint({ x: Math.round(x + b.width / 2), y: b.y + b.height / 2 });
+  const yMeta = a.y + a.height - b.height;
+  const y = b.y + (yMeta - b.y) * Math.min(1, dt * 4);
+  win.setBounds({ x: Math.round(x), y: Math.round(Math.abs(yMeta - y) < 1 ? yMeta : y), width: b.width, height: b.height });
+  if (Math.round(x) === paseo.x && Math.abs(yMeta - y) < 1) terminarPaseo();
+}
+
+function terminarPaseo() {
+  if (!paseo) return;
+  clearInterval(paseo.timer);
+  paseo = null;
+  if (!win || win.isDestroyed()) return;
+  const [x, y] = win.getPosition();
+  config.cambiar({ posicion: { x, y } });
+  win.webContents.send('hadita-paseo', 0);
   actualizarMenu();
 }
 
@@ -120,6 +168,10 @@ function plantillaMenu() {
       label: t[0].toUpperCase() + t.slice(1), type: 'radio', checked: c.tamano === t, click: () => config.cambiar({ tamano: t }),
     })) },
     { label: 'Voz', submenu: menuVoz },
+    { type: 'separator' },
+    { label: paseo ? 'Dejar de pasear' : 'Pasear ahora', click: () => (paseo ? terminarPaseo() : pasear()) },
+    { label: 'Pasear sola', type: 'checkbox', checked: c.pasear.activo,
+      click: () => config.cambiar({ pasear: { ...config.leer().pasear, activo: !config.leer().pasear.activo } }) },
     { type: 'separator' },
     { label: 'Abrir configuración', click: () => shell.openPath(config.ruta()) },
     { label: 'Salir', click: salir },
@@ -263,6 +315,7 @@ ipcMain.on('hadita-drag', (_e, fase) => {
   if (!win || win.isDestroyed()) return;
   const p = screen.getCursorScreenPoint();
   if (fase === 'inicio') {
+    terminarPaseo(); // si la agarro mientras pasea, se queda conmigo
     const [x, y] = win.getPosition();
     arrastre = { dx: p.x - x, dy: p.y - y };
   } else if (fase === 'mover' && arrastre) {
@@ -273,6 +326,8 @@ ipcMain.on('hadita-drag', (_e, fase) => {
     config.cambiar({ posicion: { x, y } });
   }
 });
+ipcMain.on('hadita-pasear', pasear);
+ipcMain.on('hadita-parar-paseo', terminarPaseo);
 ipcMain.on('hadita-quit', () => app.quit());
 app.on('window-all-closed', () => app.quit());
 app.on('will-quit', () => globalShortcut.unregisterAll());
