@@ -6,7 +6,8 @@ const crypto = require('crypto');
 const { execFile } = require('child_process');
 const sesiones = require('./sesiones');
 
-const CONFIG = process.env.HADITA_TAREAS || path.join(__dirname, 'tareas.json'); // lista blanca y permisos, se edita a mano
+// lista blanca y permisos, se edita a mano (copia en la carpeta de datos)
+const CONFIG = process.env.HADITA_TAREAS || require('./rutas').editable('tareas.json');
 const LOG = path.join(sesiones.DIR, 'tareas.log');
 const HERRAMIENTAS = ['Read', 'Glob', 'Grep', 'Edit', 'Write']; // por defecto: leer y editar archivos, sin Bash
 const LIMITE_MIN = 15;

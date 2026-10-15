@@ -1,18 +1,8 @@
 const { contextBridge, ipcRenderer } = require('electron');
-const fs = require('fs');
-const path = require('path');
-
-// frases de saludo, editables en frases.json
-let frases = {};
-try { frases = JSON.parse(fs.readFileSync(path.join(__dirname, 'frases.json'), 'utf8')); } catch {}
-
 contextBridge.exposeInMainWorld('hadita', {
-  frases,
-  // el .vrm se lee aquí con fs (no con fetch a file://) y viaja como ArrayBuffer
-  loadModel: async () => {
-    const b = await fs.promises.readFile(path.join(__dirname, 'assets', 'hadita.vrm'));
-    return b.buffer.slice(b.byteOffset, b.byteOffset + b.byteLength);
-  },
+  // los archivos los lee main (preload sin acceso a disco): personaje, frases y animaciones
+  loadModel: () => ipcRenderer.invoke('hadita-modelo'),
+  leerFrases: () => ipcRenderer.invoke('hadita-frases'),
   decir: (texto, efimero) => ipcRenderer.invoke('hadita-decir', texto, efimero),
   preguntar: (mensaje) => ipcRenderer.invoke('hadita-preguntar', mensaje),
   confirmar: (id, si) => ipcRenderer.invoke('hadita-confirmar', id, si),
@@ -32,16 +22,7 @@ contextBridge.exposeInMainWorld('hadita', {
   pasear: () => ipcRenderer.send('hadita-pasear'),
   pararPaseo: () => ipcRenderer.send('hadita-parar-paseo'),
   onPaseo: (cb) => ipcRenderer.on('hadita-paseo', (_e, dir) => cb(dir)), // 1 derecha, -1 izquierda, 0 parada
-  // clip de animación de assets/anim/: primero <nombre>.vrma, luego <nombre>.fbx; null si no hay
-  leerAnimacion: async (nombre) => {
-    if (typeof nombre !== 'string' || !/^[\w\- ]+$/.test(nombre)) return null;
-    for (const ext of ['vrma', 'fbx']) {
-      try {
-        const b = await fs.promises.readFile(path.join(__dirname, 'assets', 'anim', `${nombre}.${ext}`));
-        return { ext, buffer: b.buffer.slice(b.byteOffset, b.byteOffset + b.byteLength) };
-      } catch {}
-    }
-    return null;
-  },
+  // clip de animación: <nombre>.vrma o .fbx, primero en mi carpeta de datos y luego en assets/anim/
+  leerAnimacion: (nombre) => ipcRenderer.invoke('hadita-animacion', nombre),
   quit: () => ipcRenderer.send('hadita-quit'),
 });

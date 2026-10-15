@@ -5,17 +5,64 @@
   "main": "main.js",
   "scripts": {
     "build": "esbuild src/renderer.js --bundle --format=iife --outfile=dist/renderer.js",
-    "start": "npm run build && electron ."
+    "start": "npm run build && electron .",
+    "dist": "npm run build && electron-builder --win"
   },
   "devDependencies": {
+    "@pixiv/three-vrm": "^3.5.5",
+    "@pixiv/three-vrm-animation": "^3.5.5",
     "electron": "^33.0.0",
-    "esbuild": "^0.28.2"
+    "electron-builder": "^26.15.3",
+    "esbuild": "^0.28.2",
+    "three": "^0.186.1"
   },
   "dependencies": {
     "@huggingface/transformers": "^4.3.1",
-    "@pixiv/three-vrm": "^3.5.5",
-    "@pixiv/three-vrm-animation": "^3.5.5",
-    "msedge-tts": "^2.1.0",
-    "three": "^0.186.1"
+    "msedge-tts": "^2.1.0"
+  },
+  "productName": "Hadita",
+  "author": "Victor Sinche",
+  "build": {
+    "appId": "dev.victorsinche.hadita",
+    "productName": "Hadita",
+    "directories": {
+      "output": "release",
+      "buildResources": "build"
+    },
+    "files": [
+      "main.js",
+      "preload.js",
+      "server.js",
+      "rutas.js",
+      "config.js",
+      "icono.js",
+      "voz.js",
+      "charla.js",
+      "oido.js",
+      "sesiones.js",
+      "tareas.js",
+      "frases.json",
+      "tareas.json",
+      "index.html",
+      "dist/**",
+      "assets/**",
+      "package.json",
+      "!node_modules/onnxruntime-node/bin/napi-v*/{linux,darwin}/**"
+    ],
+    "asarUnpack": [
+      "node_modules/onnxruntime-node/**",
+      "node_modules/sharp/**",
+      "node_modules/@img/**"
+    ],
+    "win": {
+      "target": "nsis",
+      "icon": "build/icon.png"
+    },
+    "nsis": {
+      "oneClick": true,
+      "perMachine": false,
+      "createDesktopShortcut": true,
+      "shortcutName": "Hadita"
+    }
   }
 }

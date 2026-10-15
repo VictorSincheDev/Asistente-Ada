@@ -7,6 +7,8 @@ Proyecto personal. Windows, Electron, JavaScript plano (sin framework). Rama `3d
 
 - `npm start` construye el renderer y levanta la ventana. No hay tests.
 - `npm run build` empaqueta `src/renderer.js` con esbuild en `dist/renderer.js` (no se versiona).
+- `npm run dist` arma el instalador con electron-builder: `release/Hadita Setup <versión>.exe` (unos 160 MB; instalado ocupa unos 600 MB). No está firmado: Windows muestra SmartScreen la primera vez. Las animaciones de `assets/anim/` van dentro: no publicarlo.
+- `three` y `@pixiv/*` son dependencias de desarrollo porque esbuild los mete en `dist/renderer.js`; en el instalador solo van `msedge-tts` y `@huggingface/transformers` (los binarios de `onnxruntime-node` van fuera del `.asar`, `asarUnpack`).
 - Tras cambiar `main.js` o `preload.js` hay que reiniciar. Para `src/*.js`: `npm run build` y Ctrl+R. Para `index.html` basta Ctrl+R.
 - Prueba manual de un evento:
   `curl -X POST http://127.0.0.1:4577/event -H "Content-Type: application/json" -d "{\"state\":\"waiting\",\"text\":\"Hola\"}"`
@@ -16,7 +18,7 @@ Proyecto personal. Windows, Electron, JavaScript plano (sin framework). Rama `3d
 Claude Code (hooks con curl) → POST http://127.0.0.1:4577/event → server.js → main.js → IPC → src/renderer.js → src/avatar.js
 
 - `server.js`: servidor HTTP local. Escucha SOLO en 127.0.0.1:4577. Node puro, sin Electron.
-- `main.js`: ventana transparente, sin marco, siempre visible, abajo a la derecha o donde la dejé (300x500 en tamaño mediano; los 130 px de arriba son para el globo y la cajita). Crea el ícono de la bandeja y su menú. Reenvía cada evento al renderer por IPC (`hadita-event`) y la posición del cursor cada 66 ms (`hadita-cursor`). Usa `sandbox: false` para que el preload tenga `fs`. `setContentProtection(true)` la oculta al compartir pantalla; el atajo global Ctrl+Alt+H la oculta y la muestra.
+- `main.js`: ventana transparente, sin marco, siempre visible, abajo a la derecha o donde la dejé (300x500 en tamaño mediano; los 130 px de arriba son para el globo y la cajita). Crea el ícono de la bandeja y su menú. Reenvía cada evento al renderer por IPC (`hadita-event`) y la posición del cursor cada 66 ms (`hadita-cursor`). El preload no toca el disco (personaje, frases y animaciones los lee main por IPC), así que la ventana va con `sandbox: true`. Una sola instancia (`requestSingleInstanceLock`). `setContentProtection(true)` la oculta al compartir pantalla; el atajo global Ctrl+Alt+H la oculta y la muestra.
 - `config.js`: lee, valida y guarda `config.json`, y avisa de cada cambio. Node puro, sin Electron.
 - `icono.js`: ícono de la bandeja, dibujado desde el sprite pixel art original.
 - `voz.js`: voz neuronal con `msedge-tts` y caché en disco. Node puro, sin Electron.
@@ -32,7 +34,8 @@ Claude Code (hooks con curl) → POST http://127.0.0.1:4577/event → server.js 
 - `src/animacion.js`: carga clips `.vrma` y `.fbx` de Mixamo adaptados al VRM.
 - `assets/anim/`: los clips de animación (los descargo yo; ver «Clips de animación»).
 - `index.html`: estructura y CSS. Carga `dist/renderer.js`. Tiene CSP: sin scripts inline; `img-src` y `connect-src` permiten `blob:` para las texturas del VRM.
-- `assets/hadita.vrm`: mi avatar (VRM 1.0, hecho en VRoid).
+- `rutas.js`: `APP` (archivos del programa; de solo lectura dentro del `.exe`) y `DATOS` (`%APPDATA%/hadita`, fijado por main en `HADITA_DIR`). `editable()` copia `tareas.json` y `frases.json` a `DATOS` la primera vez; `migrar()` mueve una sola vez `voz/`, `modelos/` y `datos/` de la carpeta del código a `DATOS`.
+- `assets/hadita.vrm`: mi avatar (VRM 1.0, hecho en VRoid). Es el personaje por defecto.
 - `hooks/`: `notify.js` y un ejemplo de settings. NO los uso; mis hooks reales usan curl.
 
 ## Eventos
@@ -112,6 +115,14 @@ Dos formatos llegan al mismo endpoint:
 - Posición: se guarda al soltar el arrastre y se restaura al arrancar si sigue cayendo en alguna pantalla.
 - Ícono en la bandeja (clic: mostrar u ocultar) con menú: mostrar/ocultar, silenciar, tamaño, voz (voces en español del servicio, agrupadas por país), abrir configuración y salir. El botón ⚙ junto a la × abre el mismo menú.
 - «Salir» del menú se despide igual que la ×.
+- Todo lo que se escribe o edito a mano vive en `%APPDATA%/hadita`: `config.json`, `frases.json`, `tareas.json`, `voz/`, `modelos/`, `datos/`, `personajes/` y `anim/`. El menú tiene «Abrir carpeta de datos».
+- Arrancar con Windows: `arrancarConWindows` (por defecto sí) y casilla en el menú. Solo funciona en la versión instalada (`app.setLoginItemSettings`); desde el código la casilla sale desactivada.
+
+## Personajes
+
+- `config.json`, `modelo`: nombre de un `.vrm` en `%APPDATA%/hadita/personajes/`; vacío = la hadita incluida. Menú «Personaje»: la incluida, los de esa carpeta y «Agregar personaje…», que copia el archivo elegido ahí y lo pone. Al cambiar, la ventana se recarga.
+- Sirve cualquier VRM 1.0 o 0.x: encuadre, expresiones, mirada, alas y clips se adaptan solos. Los 0.x miran al revés: `VRMUtils.rotateVRM0`, signo invertido en x y z de las poses por código (`flip`) y alas giradas (`wingRoot`).
+- Animaciones extra: un `.vrma`/`.fbx` en `%APPDATA%/hadita/anim/` tiene prioridad sobre el de `assets/anim/` (así se cambian sin reconstruir el `.exe`).
 
 ## Paseo
 
@@ -154,11 +165,10 @@ Dos formatos llegan al mismo endpoint:
 - No tocar `~/.claude/settings.json` sin preguntarme. Ahí cada hook manda a dos destinos: mi oficina pixel (localhost:3777) y la hadita (127.0.0.1:4577). La oficina es otro proyecto y no se rompe.
 - Usar siempre `127.0.0.1`, no `localhost`, para la hadita.
 - Nunca bloquear a Claude Code: los hooks deben fallar en silencio si la hadita está cerrada.
-- Mantenerlo simple: sin TypeScript y sin dependencias nuevas, salvo que yo lo pida. Las únicas son `three`, `@pixiv/three-vrm`, `@pixiv/three-vrm-animation`, `msedge-tts`, `@huggingface/transformers` y `esbuild`.
+- Mantenerlo simple: sin TypeScript y sin dependencias nuevas, salvo que yo lo pida. Las únicas son `three`, `@pixiv/three-vrm`, `@pixiv/three-vrm-animation`, `msedge-tts`, `@huggingface/transformers`, `esbuild` y `electron-builder`.
 - Textos de la interfaz y comentarios en español.
 
 ## Pendientes
 
-1. Arrancar sola con Windows.
-2. Resumen con IA de lo que hizo el agente al terminar.
-3. Que me escuche (voz de entrada). Paso grande, al final.
+1. Resumen con IA de lo que hizo el agente al terminar.
+2. Que me escuche (voz de entrada). Paso grande, al final.

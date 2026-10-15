@@ -8,7 +8,9 @@ const { MsEdgeTTS, OUTPUT_FORMAT } = require('msedge-tts');
 // Voz, tono y velocidad vienen de config.json (ver config.js); estos son solo el arranque
 const ajustes = { voz: 'es-PE-CamilaNeural', tono: '+20Hz', velocidad: '+8%' };
 
-const DIR = path.join(__dirname, 'voz'); // caché, fuera de git
+const { DATOS } = require('./rutas');
+
+const DIR = path.join(DATOS, 'voz'); // caché
 const FORMATO = OUTPUT_FORMAT.AUDIO_24KHZ_48KBITRATE_MONO_MP3;
 const LIMITE_MS = 20000;                 // tope de una generación, para no dejar conexiones colgadas
 const enCurso = new Map();               // archivo -> promesa, para no generar dos veces lo mismo

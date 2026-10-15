@@ -124,7 +124,7 @@ async function loadAnimations() {
   const list = [];
   for (const [key, name] of Object.entries(animMap || {})) {
     const file = name ? await window.hadita.leerAnimacion(name) : null;
-    if (file) list.push({ key, ...file });
+    if (file) list.push({ key, ext: file.ext, buffer: file.bytes.buffer.slice(file.bytes.byteOffset, file.bytes.byteOffset + file.bytes.byteLength) });
   }
   const loaded = await loadClips(list);
   console.log('Animaciones:', loaded.length ? loaded.join(', ') : 'ninguna (todo por código)');
@@ -238,7 +238,7 @@ function announce(state, proj) {
 }
 
 // ---------- Saludos (frases.json) ----------
-const frases = (window.hadita && window.hadita.frases) || {};
+let frases = {}; // llegan de main al arrancar (frases.json de la carpeta de datos)
 function pick(key) {
   const list = Array.isArray(frases[key]) ? frases[key] : [];
   return list[Math.floor(Math.random() * list.length)] || '';
@@ -499,13 +499,14 @@ canvas.addEventListener('pointercancel', () => {
 if (window.hadita) {
   window.hadita.onConfig(applyConfig);
   // la configuración llega antes del saludo, para que respete el silencio
-  Promise.all([window.hadita.leerConfig().then(applyConfig), window.hadita.loadModel()])
-    .then(([, buffer]) => initAvatar(canvas, buffer))
+  Promise.all([window.hadita.leerConfig().then(applyConfig), window.hadita.loadModel(),
+    window.hadita.leerFrases().then((f) => { frases = f || {}; })])
+    .then(([, bytes]) => initAvatar(canvas, bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength)))
     .then(() => { avatarReady = true; return loadAnimations(); })
     .then(greet)
     .catch((e) => {
       console.error('No pude cargar el avatar:', e);
-      bubble.textContent = 'No pude cargar assets/hadita.vrm';
+      bubble.textContent = 'No pude cargar el personaje';
       bubble.classList.add('show');
     });
   // el cursor llega en píxeles relativos a la ventana

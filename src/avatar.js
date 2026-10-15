@@ -46,6 +46,9 @@ const bone = (name) => vrm.humanoid.getNormalizedBoneNode(name);
 let bones = [];            // huesos humanoides que mueve la pose por código (todos menos los ojos)
 let hipsRest = null;       // posición de reposo de las caderas
 let alturaCaderas = 1;     // para escalar el desplazamiento de los FBX de Mixamo
+// Modelos VRM 0.x: miran al otro lado; rotateVRM0 los gira y las rotaciones de pose cambian de signo en x y z
+let flip = 1;
+let baseYaw = 0;
 
 // ---------- Clips de animación ----------
 // estado → clave del mapa de clips (config.animaciones). Sin clip para el estado, se mueve por código.
@@ -176,6 +179,9 @@ export async function initAvatar(canvas, buffer) {
   const gltf = await loader.parseAsync(buffer, '');
   vrm = gltf.userData.vrm;
   VRMUtils.removeUnnecessaryVertices(gltf.scene);
+  VRMUtils.rotateVRM0(vrm); // no hace nada en VRM 1.0
+  flip = vrm.meta?.metaVersion === '0' ? -1 : 1;
+  baseYaw = vrm.scene.rotation.y;
   vrm.scene.traverse((o) => { o.frustumCulled = false; });
   scene.add(vrm.scene);
   vrm.lookAt.target = lookTarget;
@@ -197,12 +203,15 @@ export async function initAvatar(canvas, buffer) {
   metersPerPx = height / canvas.clientHeight;
 
   // El modelo viene en pose T: brazos abajo desde el primer cuadro
-  bone('leftUpperArm').rotation.set(ARM_FORWARD, 0, -ARM_DOWN);
-  bone('rightUpperArm').rotation.set(ARM_FORWARD, 0, ARM_DOWN);
+  bone('leftUpperArm').rotation.set(flip * ARM_FORWARD, 0, flip * -ARM_DOWN);
+  bone('rightUpperArm').rotation.set(flip * ARM_FORWARD, 0, flip * ARM_DOWN);
 
   const back = bone('chest') || bone('upperChest') || bone('spine');
   wings = [makeWing(1), makeWing(-1)];
-  back.add(...wings);
+  const wingRoot = new THREE.Group(); // en VRM 0.x la espalda está del otro lado
+  wingRoot.rotation.y = flip < 0 ? Math.PI : 0;
+  wingRoot.add(...wings);
+  back.add(wingRoot);
 
   let last = performance.now();
   const frame = (now) => {
@@ -281,7 +290,7 @@ function update(dt, t) {
     else target.head[1] = lookYaw;
     for (const name of bones) {
       const r = target[name] || REST;
-      _q.setFromEuler(_e.set(r[0], r[1], r[2]));
+      _q.setFromEuler(_e.set(flip * r[0], r[1], flip * r[2]));
       bone(name).quaternion.slerp(_q, k);
     }
     bone('hips').position.lerp(hipsRest, k);
@@ -300,7 +309,7 @@ function update(dt, t) {
   }
   vrm.scene.position.y = y;
   // al caminar se pone de perfil hacia donde va; quieta, de frente
-  vrm.scene.rotation.y += (mood.walking * Math.PI / 2 - vrm.scene.rotation.y) * (1 - Math.exp(-6 * dt));
+  vrm.scene.rotation.y += (baseYaw + mood.walking * Math.PI / 2 - vrm.scene.rotation.y) * (1 - Math.exp(-6 * dt));
 
   // Alas
   for (const w of wings) w.rotation.y = w.userData.side * (0.35 + Math.sin(flapPhase) * 0.4);

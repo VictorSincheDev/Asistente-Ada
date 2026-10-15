@@ -11,6 +11,8 @@ const DEFECTO = {
   tamano: 'mediano',      // chico, mediano o grande
   posicion: null,         // { x, y } de la esquina superior izquierda; null = abajo a la derecha
   silencio: false,
+  arrancarConWindows: true, // solo tiene efecto en la versión instalada
+  modelo: '',               // personaje: archivo .vrm en personajes/; vacío = la hadita incluida
   // clip por estado: nombre de archivo en assets/anim/ sin extensión (se busca .vrma y luego .fbx).
   // Vacío o sin archivo: ese estado se mueve por código.
   animaciones: { idle: 'idle', working: 'teclear', waiting: 'saludar', done: 'celebrar', estirarse: 'estirarse', pensar: 'pensar', caminar: 'caminar' },
@@ -48,6 +50,8 @@ function normalizar(leido) {
   const p = c.posicion;
   c.posicion = esObjeto(p) && Number.isFinite(p.x) && Number.isFinite(p.y) ? { x: Math.round(p.x), y: Math.round(p.y) } : null;
   c.silencio = c.silencio === true;
+  c.arrancarConWindows = c.arrancarConWindows !== false;
+  if (typeof c.modelo !== 'string' || !/^[\w\- .()]*\.vrm$|^$/i.test(c.modelo) || c.modelo.includes('..')) c.modelo = '';
   c.pasear.activo = c.pasear.activo === true;
   c.pasear.cadaMin = Number.isFinite(Number(c.pasear.cadaMin)) ? Math.max(1, Number(c.pasear.cadaMin)) : DEFECTO.pasear.cadaMin;
   c.pasear.velocidad = Number.isFinite(Number(c.pasear.velocidad)) ? Math.min(600, Math.max(30, Number(c.pasear.velocidad))) : DEFECTO.pasear.velocidad;

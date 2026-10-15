@@ -1,7 +1,17 @@
-const { app, BrowserWindow, screen, ipcMain, globalShortcut, session, Tray, Menu, shell } = require('electron');
+const { app, BrowserWindow, screen, ipcMain, globalShortcut, session, Tray, Menu, shell, dialog } = require('electron');
 const path = require('path');
 const fs = require('fs');
 const { spawn } = require('child_process');
+
+// Lo que se escribe va a %APPDATA%/hadita: dentro del .exe la carpeta del programa es de solo lectura.
+// Tiene que quedar fijado antes de cargar los módulos que guardan cosas.
+process.env.HADITA_DIR = app.getPath('userData');
+const rutas = require('./rutas');
+rutas.migrar();
+
+// Una sola hadita a la vez (con arranque automático es fácil abrir dos)
+if (!app.requestSingleInstanceLock()) app.exit(0);
+
 const { start } = require('./server');
 const voz = require('./voz');
 const charla = require('./charla');
@@ -43,9 +53,9 @@ function createWindow() {
     alwaysOnTop: true,
     skipTaskbar: true,
     hasShadow: false,
-    // sandbox: false para que preload.js pueda leer el .vrm con fs
+    // el preload no toca el disco (lo hace main), así que va con sandbox
     // backgroundThrottling: false para que la detección de silencio no se frene sin foco
-    webPreferences: { preload: path.join(__dirname, 'preload.js'), sandbox: false, backgroundThrottling: false },
+    webPreferences: { preload: path.join(__dirname, 'preload.js'), sandbox: true, backgroundThrottling: false },
   });
   win.setAlwaysOnTop(true, 'screen-saver');
   win.setContentProtection(true); // no sale al compartir pantalla ni en capturas
@@ -64,6 +74,12 @@ function alternarVentana() {
 // ---------- Configuración: se aplica en vivo ----------
 function aplicarConfig(c, anterior) {
   if (voz.configurar(c)) pregenerar(); // otra voz, tono o velocidad: frases fijas de nuevo a la caché
+  // arranque con Windows: solo en la versión instalada (desde el código abriría el Electron de desarrollo)
+  if (app.isPackaged && (!anterior || c.arrancarConWindows !== anterior.arrancarConWindows)) {
+    app.setLoginItemSettings({ openAtLogin: c.arrancarConWindows });
+  }
+  // otro personaje: se recarga la ventana con el modelo nuevo
+  if (anterior && c.modelo !== anterior.modelo && win && !win.isDestroyed()) win.reload();
   if (win && !win.isDestroyed()) {
     if (anterior && c.tamano !== anterior.tamano) {
       // se agranda o achica manteniendo fija la esquina inferior derecha
@@ -129,11 +145,38 @@ function terminarPaseo() {
   actualizarMenu();
 }
 
+// ---------- Archivos: personaje, frases y animaciones ----------
+const PERSONAJES = path.join(rutas.DATOS, 'personajes'); // .vrm que agrego desde el menú
+const MODELO_INCLUIDO = path.join(rutas.APP, 'assets', 'hadita.vrm');
+
+function personajes() {
+  try { return fs.readdirSync(PERSONAJES).filter((n) => /\.vrm$/i.test(n)).sort(); } catch { return []; }
+}
+
+function leerFrases() {
+  return JSON.parse(fs.readFileSync(rutas.editable('frases.json'), 'utf8'));
+}
+
+// Elige un .vrm, lo copia a personajes/ y lo deja puesto
+async function agregarPersonaje() {
+  const r = await dialog.showOpenDialog({ title: 'Elegir personaje (.vrm)', properties: ['openFile'],
+    filters: [{ name: 'Modelo VRM', extensions: ['vrm'] }] });
+  if (r.canceled || !r.filePaths[0]) return;
+  const nombre = path.basename(r.filePaths[0]).replace(/[^\w\- .()]/g, '_'); // el mismo filtro que config.js
+  try {
+    fs.mkdirSync(PERSONAJES, { recursive: true });
+    fs.copyFileSync(r.filePaths[0], path.join(PERSONAJES, nombre));
+    config.cambiar({ modelo: nombre });
+  } catch (e) {
+    dialog.showErrorBox('Hadita', `No pude copiar el personaje: ${e.message}`);
+  }
+}
+
 // Frases fijas y de frases.json, generadas por adelantado en la caché de voz
 function pregenerar() {
   voz.calentar();
   let saludos = [];
-  try { saludos = Object.values(JSON.parse(fs.readFileSync(path.join(__dirname, 'frases.json'), 'utf8'))).flat(); } catch {}
+  try { saludos = Object.values(leerFrases()).flat(); } catch {}
   for (const frase of ['Terminé', 'Te necesito aquí', 'No te escuché bien', ...saludos]) {
     if (typeof frase === 'string') voz.decir(frase).catch(() => {});
   }
@@ -168,12 +211,22 @@ function plantillaMenu() {
       label: t[0].toUpperCase() + t.slice(1), type: 'radio', checked: c.tamano === t, click: () => config.cambiar({ tamano: t }),
     })) },
     { label: 'Voz', submenu: menuVoz },
+    { label: 'Personaje', submenu: [
+      { label: 'Hadita (incluida)', type: 'radio', checked: !c.modelo, click: () => config.cambiar({ modelo: '' }) },
+      ...personajes().map((n) => ({ label: n.replace(/\.vrm$/i, ''), type: 'radio', checked: c.modelo === n, click: () => config.cambiar({ modelo: n }) })),
+      { type: 'separator' },
+      { label: 'Agregar personaje…', click: agregarPersonaje },
+    ] },
+    { label: app.isPackaged ? 'Arrancar con Windows' : 'Arrancar con Windows (solo en la versión instalada)',
+      type: 'checkbox', checked: c.arrancarConWindows, enabled: app.isPackaged,
+      click: () => config.cambiar({ arrancarConWindows: !config.leer().arrancarConWindows }) },
     { type: 'separator' },
     { label: paseo ? 'Dejar de pasear' : 'Pasear ahora', click: () => (paseo ? terminarPaseo() : pasear()) },
     { label: 'Pasear sola', type: 'checkbox', checked: c.pasear.activo,
       click: () => config.cambiar({ pasear: { ...config.leer().pasear, activo: !config.leer().pasear.activo } }) },
     { type: 'separator' },
     { label: 'Abrir configuración', click: () => shell.openPath(config.ruta()) },
+    { label: 'Abrir carpeta de datos', click: () => shell.openPath(rutas.DATOS) },
     { label: 'Salir', click: salir },
   ];
 }
@@ -301,6 +354,25 @@ ipcMain.handle('hadita-confirmar', (_e, id, si) => {
   return { texto };
 });
 ipcMain.handle('hadita-config-leer', () => config.leer());
+// personaje elegido; si falta el archivo, la hadita incluida
+ipcMain.handle('hadita-modelo', () => {
+  const elegido = config.leer().modelo && path.join(PERSONAJES, config.leer().modelo);
+  try { return fs.readFileSync(elegido && fs.existsSync(elegido) ? elegido : MODELO_INCLUIDO); } catch (e) {
+    console.error('No pude leer el personaje:', e.message);
+    return fs.readFileSync(MODELO_INCLUIDO);
+  }
+});
+ipcMain.handle('hadita-frases', () => { try { return leerFrases(); } catch { return {}; } });
+// clip: <nombre>.vrma o .fbx; primero en la carpeta de datos (anim/), luego en los que trae el programa
+ipcMain.handle('hadita-animacion', (_e, nombre) => {
+  if (typeof nombre !== 'string' || !/^[\w\- ]+$/.test(nombre)) return null;
+  for (const dir of [path.join(rutas.DATOS, 'anim'), path.join(rutas.APP, 'assets', 'anim')]) {
+    for (const ext of ['vrma', 'fbx']) {
+      try { return { ext, bytes: fs.readFileSync(path.join(dir, `${nombre}.${ext}`)) }; } catch {}
+    }
+  }
+  return null;
+});
 // el renderer solo puede cambiar el silencio (botón ♪) y el volumen (barrita); el resto va por el menú o el archivo
 ipcMain.on('hadita-silencio', (_e, si) => config.cambiar({ silencio: si === true }));
 ipcMain.on('hadita-volumen', (_e, v) => { if (Number.isFinite(v)) config.cambiar({ volumen: v }); });

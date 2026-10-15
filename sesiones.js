@@ -3,7 +3,7 @@
 const fs = require('fs');
 const path = require('path');
 
-const DIR = process.env.HADITA_DATOS || path.join(__dirname, 'datos'); // fuera de git
+const DIR = process.env.HADITA_DATOS || path.join(require('./rutas').DATOS, 'datos');
 const ARCHIVO = path.join(DIR, 'sesiones.json');
 const MAXIMO = 200;        // se conservan las más recientes
 const TITULO_MAX = 60;

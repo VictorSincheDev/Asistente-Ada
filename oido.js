@@ -5,7 +5,7 @@ const path = require('path');
 const MODELO = 'Xenova/whisper-small';
 const PRECISION = 'q8';    // pesos cuantizados: mucho más livianos que fp32
 const IDIOMA = 'spanish';
-const DIR = path.join(__dirname, 'modelos'); // descarga del modelo, fuera de git
+const DIR = path.join(require('./rutas').DATOS, 'modelos'); // descarga del modelo
 
 // Frases que Whisper se inventa cuando solo hay silencio o ruido
 const INVENTADAS = [
